@@ -4,8 +4,8 @@ import {
   generateHeatmap,
   postprocess,
   toProbabilities,
-  type ClarityRayResult,
-  type HeatmapData
+  type HeatmapData,
+  type SafeResult
 } from '@/lib/clarity/postprocess';
 import type { ClaritySpec } from '@/lib/clarity/types';
 import { preprocessImage } from '@/lib/clarity/preprocess';
@@ -16,10 +16,12 @@ import { loadModel } from '@/lib/clarity/loader';
 
 type ClarityRayStatus =
   | 'idle'
-  | 'loading_model'
-  | 'preprocessing'
-  | 'running'
-  | 'complete'
+  | 'loading_manifest'
+  | 'loading_spec'
+  | 'downloading_model'
+  | 'verifying_model'
+  | 'ready'
+  | 'processing'
   | 'error';
 
 export type AnalysisStatus = ClarityRayStatus;
@@ -28,7 +30,7 @@ export type AnalysisState = {
   status: AnalysisStatus;
   loading: boolean;
   error: string | null;
-  result: ClarityRayResult | null;
+  result: SafeResult | null;
   imageUrl: string | null;
   heatmap: HeatmapData | null;
 };
@@ -64,6 +66,18 @@ function getUserFriendlyError(err: unknown): string {
     return 'The AI model could not be loaded. Please refresh the page and try again.';
   }
 
+  if (/Failed to fetch model/i.test(message)) {
+    return 'Failed to load model. Please try again.';
+  }
+
+  if (/Failed to fetch|NetworkError|network/i.test(message)) {
+    return 'Network error. Please check your connection and retry.';
+  }
+
+  if (/integrity check failed/i.test(message)) {
+    return 'Model integrity check failed. Please reload.';
+  }
+
   if (/Invalid image tensor shape/i.test(message)) {
     return 'The selected image format is not supported for analysis.';
   }
@@ -90,13 +104,25 @@ export function useClarityRay(spec: ClaritySpec) {
 
     const initializeSession = async () => {
       try {
+        setState((prev: AnalysisState) => ({
+          ...prev,
+          status: 'loading_manifest',
+          loading: true,
+          error: null
+        }));
+
         const manifest = await fetchManifest();
         const currentModel = getCurrentModel(manifest);
         const modelUrl = currentModel.url;
         const specUrl = currentModel.spec_url;
 
+        setState((prev: AnalysisState) => ({ ...prev, status: 'loading_spec' }));
         const fetchedSpec = await fetchSpec(specUrl);
+
+        setState((prev: AnalysisState) => ({ ...prev, status: 'downloading_model' }));
         const modelBuffer = await loadModel(modelUrl, fetchedSpec);
+
+        setState((prev: AnalysisState) => ({ ...prev, status: 'verifying_model' }));
         const createdSession = await ort.InferenceSession.create(modelBuffer);
 
         if (!isMounted) {
@@ -106,6 +132,12 @@ export function useClarityRay(spec: ClaritySpec) {
         setActiveSpec(fetchedSpec);
         setSession(createdSession);
         sessionCache.set(fetchedSpec.id, createdSession);
+        setState((prev: AnalysisState) => ({
+          ...prev,
+          status: 'ready',
+          loading: false,
+          error: null
+        }));
       } catch (err) {
         if (!isMounted) {
           return;
@@ -151,7 +183,7 @@ export function useClarityRay(spec: ClaritySpec) {
 
       setState((prev: AnalysisState) => ({
         ...prev,
-        status: 'idle',
+        status: 'processing',
         loading: true,
         error: null
       }));
@@ -165,37 +197,17 @@ export function useClarityRay(spec: ClaritySpec) {
           throw new Error('WebAssembly is not supported in this browser.');
         }
 
-        if (!session && !sessionCache.has(activeSpec.id)) {
-          setState((prev: AnalysisState) => ({ ...prev, status: 'loading_model' }));
-        }
-
-        setState((prev: AnalysisState) => ({ ...prev, status: 'preprocessing' }));
-
         await new Promise<void>((resolve) => {
           window.requestAnimationFrame(() => resolve());
         });
 
         const input = await preprocessImage(file, activeSpec);
 
-        setState((prev: AnalysisState) => ({ ...prev, status: 'running' }));
-
         const rawOutput = await runInference(input, activeSpec);
-        const safeResult = postprocess(rawOutput, activeSpec);
+        const safeResult: SafeResult = postprocess(rawOutput, activeSpec);
         const probabilities = toProbabilities(rawOutput, activeSpec);
 
-        const findings: { label: string; confidence: number }[] = activeSpec.output.classes
-          .map((label, idx) => ({ label, confidence: probabilities[idx] ?? 0 }))
-          .sort((a, b) => b.confidence - a.confidence);
-
-        const result: ClarityRayResult = {
-          primaryFinding: safeResult.primaryFinding,
-          safetyTier: safeResult.safetyTier,
-          findings,
-          explanation: safeResult.plainSummary,
-          disclaimer: safeResult.disclaimer
-        };
-
-        if (!result || result.findings.length === 0) {
+        if (!safeResult || activeSpec.output.classes.length === 0) {
           throw new Error('Analysis completed, but we could not interpret the output. Please try again.');
         }
 
@@ -211,8 +223,8 @@ export function useClarityRay(spec: ClaritySpec) {
         }
         imageUrlRef.current = imageUrl;
 
-        setState({ status: 'complete', loading: false, error: null, result, imageUrl, heatmap });
-        return result;
+        setState({ status: 'ready', loading: false, error: null, result: safeResult, imageUrl, heatmap });
+        return safeResult;
       } catch (err) {
         const message = getUserFriendlyError(err);
         setState((prev: AnalysisState) => ({
@@ -234,14 +246,14 @@ export function useClarityRay(spec: ClaritySpec) {
     }
 
     setState({
-      status: 'idle',
+      status: session || sessionCache.has(activeSpec.id) ? 'ready' : 'idle',
       loading: false,
       error: null,
       result: null,
       imageUrl: null,
       heatmap: null
     });
-  }, []);
+  }, [activeSpec.id, session]);
 
   useEffect(() => {
     return () => {
@@ -254,7 +266,6 @@ export function useClarityRay(spec: ClaritySpec) {
 
   return {
     ...state,
-    findings: state.result?.findings ?? [],
     heatmapCanvas: state.heatmap,
     disclaimer: state.result?.disclaimer ?? null,
     runAnalysis,
