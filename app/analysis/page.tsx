@@ -128,23 +128,32 @@ interface AnalysisPageContentProps {
 }
 
 function AnalysisPageContent({ spec }: AnalysisPageContentProps) {
-
-  const { status, findings, heatmapCanvas, disclaimer, error, result, imageUrl, runAnalysis, reset } = useClarityRay(spec);
+  const { status, heatmapCanvas, error, result, imageUrl, runAnalysis, reset } = useClarityRay(spec);
 
   const statusText = useMemo(() => {
     switch (status) {
-      case 'loading_model':
-        return 'Loading AI model locally...';
-      case 'preprocessing':
-        return 'Preparing image...';
-      case 'running':
-        return 'Running analysis locally on your device...';
+      case 'loading_manifest':
+      case 'loading_spec':
+        return 'Preparing AI model...';
+      case 'downloading_model':
+        return 'Downloading model...';
+      case 'verifying_model':
+        return 'Verifying model integrity...';
+      case 'ready':
+        return 'Model ready';
+      case 'processing':
+        return 'Analyzing image...';
       default:
         return null;
     }
   }, [status]);
 
   const errorMessage = error ? new Error(error).message : null;
+
+  const isPreparing = status === 'loading_manifest' || status === 'loading_spec';
+  const isLoading = isPreparing || status === 'downloading_model' || status === 'verifying_model';
+  const isProcessing = status === 'processing';
+  const canUpload = status === 'ready' || status === 'idle';
 
   return (
     <>
@@ -156,12 +165,22 @@ function AnalysisPageContent({ spec }: AnalysisPageContentProps) {
         ctaHref="/dashboard"
       >
         <div className="mb-4 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-          Analysis runs on your device — no data is uploaded
+          Processing happens locally in your browser.
         </div>
 
         {status === 'idle' && (
+          <div className="mb-4 rounded-lg border border-slate-600/60 bg-slate-800/40 px-3 py-2 text-sm text-slate-200">
+            Your image is processed locally. Nothing is uploaded.
+          </div>
+        )}
+
+        {canUpload && (
           <div className="space-y-4">
-            <p className="text-sm text-slate-300">Drop an X-ray image to begin private on-device screening support.</p>
+            {status === 'ready' && (
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+                Model ready
+              </div>
+            )}
             <UploadZone
               onRun={async (file: File) => {
                 await runAnalysis(file);
@@ -173,28 +192,42 @@ function AnalysisPageContent({ spec }: AnalysisPageContentProps) {
           </div>
         )}
 
-        {(status === 'loading_model' || status === 'preprocessing' || status === 'running') && (
+        {isLoading && (
           <div className="card flex min-h-64 flex-col items-center justify-center gap-3 text-center">
             <LoaderCircle className="animate-spin text-emerald-300" size={28} />
             <p className="text-sm text-slate-200">{statusText}</p>
+            {isPreparing && <p className="text-xs text-slate-400">First load may take a few seconds</p>}
+            {status === 'downloading_model' && <p className="text-xs text-slate-400">File size hint unavailable</p>}
           </div>
         )}
 
-        {status === 'complete' && result && (
+        {isProcessing && (
+          <div className="card flex min-h-64 flex-col items-center justify-center gap-3 text-center">
+            <LoaderCircle className="animate-spin text-emerald-300" size={28} />
+            <p className="text-sm text-slate-200">Analyzing image...</p>
+          </div>
+        )}
+
+        {result && !isProcessing && (
           <div className="grid gap-4 lg:grid-cols-2">
             <ResultsPanel result={result} status={status} />
             <GradCAMViewer imageUrl={imageUrl} heatmap={heatmapCanvas ?? undefined} />
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-100 lg:col-span-2">
-              {disclaimer}
-            </div>
-            <p className="text-xs text-slate-400 lg:col-span-2">Detected classes: {findings.length}</p>
           </div>
         )}
 
         {status === 'error' && (
           <div className="card space-y-4">
             <p className="text-sm text-red-400">{errorMessage}</p>
-            <Button variant="primary" onClick={reset}>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  window.location.reload();
+                  return;
+                }
+                reset();
+              }}
+            >
               Retry
             </Button>
           </div>

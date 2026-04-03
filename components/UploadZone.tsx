@@ -6,17 +6,25 @@ import type { AnalysisStatus } from '@/hooks/useClarityRay';
 interface UploadZoneProps {
   onRun: (file: File) => Promise<void> | void;
   onClear?: () => void;
-  loading?: boolean;
   status?: AnalysisStatus;
   error?: string | null;
 }
 
-export function UploadZone({ onRun, onClear, loading, status = 'idle', error }: UploadZoneProps) {
+export function UploadZone({ onRun, onClear, status = 'idle', error }: UploadZoneProps) {
   const [fileName, setFileName] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const dropRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const isBusy =
+    status === 'loading_manifest' ||
+    status === 'loading_spec' ||
+    status === 'downloading_model' ||
+    status === 'verifying_model' ||
+    status === 'processing';
+
+  const isReady = status === 'ready';
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -37,7 +45,7 @@ export function UploadZone({ onRun, onClear, loading, status = 'idle', error }: 
   const onDrop = (evt: React.DragEvent<HTMLDivElement>) => {
     evt.preventDefault();
     evt.stopPropagation();
-    if (loading) return;
+    if (isBusy) return;
     handleFiles(evt.dataTransfer.files);
     dropRef.current?.classList.remove('border-accent');
   };
@@ -72,19 +80,19 @@ export function UploadZone({ onRun, onClear, loading, status = 'idle', error }: 
           accept="image/png,image/jpeg,image/jpg"
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
-          disabled={loading}
+          disabled={isBusy}
         />
         {fileName && <p className="text-xs text-slate-300">Selected: {fileName}</p>}
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button className="btn" onClick={() => inputRef.current?.click()} disabled={loading}>
+        <button className="btn" onClick={() => inputRef.current?.click()} disabled={isBusy}>
           Choose File
         </button>
         <button
           className="btn bg-emerald-600"
           onClick={() => selectedFile && onRun(selectedFile)}
-          disabled={loading || !selectedFile}
+          disabled={isBusy || !selectedFile || !isReady}
         >
           Run Analysis
         </button>
@@ -99,15 +107,19 @@ export function UploadZone({ onRun, onClear, loading, status = 'idle', error }: 
             }
             onClear?.();
           }}
-          disabled={loading || !selectedFile}
+          disabled={isBusy || !selectedFile}
         >
           Clear
         </button>
       </div>
 
-      <p className="text-xs text-emerald-300">Runs locally. Your data never leaves your device.</p>
-      {status === 'loading_model' && <p className="text-xs text-slate-300">Loading AI model...</p>}
-      {status === 'running' && <p className="text-xs text-slate-300">Running analysis...</p>}
+      <p className="text-xs text-emerald-300">Processing happens locally in your browser.</p>
+      {status === 'loading_manifest' && <p className="text-xs text-slate-300">Loading model manifest...</p>}
+      {status === 'loading_spec' && <p className="text-xs text-slate-300">Loading model specification...</p>}
+      {status === 'downloading_model' && <p className="text-xs text-slate-300">Downloading model...</p>}
+      {status === 'verifying_model' && <p className="text-xs text-slate-300">Verifying model integrity...</p>}
+      {status === 'ready' && <p className="text-xs text-emerald-300">Model ready.</p>}
+      {status === 'processing' && <p className="text-xs text-slate-300">Analyzing image...</p>}
       {(localError || error) && <p className="text-xs text-red-300">{localError ?? error}</p>}
     </div>
   );
