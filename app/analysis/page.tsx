@@ -2,6 +2,7 @@
 
 import { LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { AppShell } from '@/layouts/AppShell';
 import { UploadZone } from '@/components/UploadZone';
@@ -11,7 +12,25 @@ import { ConsentModal } from '@/components/ConsentModal';
 import { useClarityRay } from '@/hooks/useClarityRay';
 import { type ClaritySpec, validateSpec } from '@/lib/clarity/types';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseClarityUrl(payload: unknown): string {
+  if (!isRecord(payload) || !isRecord(payload.current_version)) {
+    throw new Error('Invalid model detail response.');
+  }
+
+  const clarityUrl = payload.current_version.clarity_url;
+  if (typeof clarityUrl !== 'string' || clarityUrl.length === 0) {
+    throw new Error('Missing clarity.json URL in model response.');
+  }
+
+  return clarityUrl;
+}
+
 export default function AnalysisPage() {
+  const router = useRouter();
   const [spec, setSpec] = useState<ClaritySpec | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,7 +38,21 @@ export default function AnalysisPage() {
     setError(null);
 
     try {
-      const response = await fetch('/models/densenet121-chest/clarity.json');
+      const selectedSlug = window.localStorage.getItem('clarityray_selected_model');
+      if (!selectedSlug) {
+        router.replace('/models');
+        return;
+      }
+
+      const modelResponse = await fetch(`/api/models/${encodeURIComponent(selectedSlug)}`, { cache: 'no-store' });
+      if (!modelResponse.ok) {
+        throw new Error(`Failed to load selected model (${modelResponse.status})`);
+      }
+
+      const modelPayload: unknown = await modelResponse.json();
+      const clarityUrl = parseClarityUrl(modelPayload);
+
+      const response = await fetch(clarityUrl, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error(`Failed to load model spec (${response.status})`);
       }
@@ -32,7 +65,7 @@ export default function AnalysisPage() {
       setError(message);
       setSpec(null);
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     void loadSpec();

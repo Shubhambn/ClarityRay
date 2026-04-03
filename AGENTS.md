@@ -7,7 +7,7 @@ Medical inference runs entirely client-side using ONNX Runtime Web.
 No patient data ever leaves the user's device.
 
 It is also a model platform: researchers convert trained ONNX models
-using the clarityray-converter pip package and submit them to a model library.
+using the converter package and submit them to a model library.
 
 ## Core Invariant — Never Break This
 
