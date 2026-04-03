@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:api": "npm --prefix backend run dev",
     "build": "next build",
     "start": "next start",
+    "start:api": "npm --prefix backend run start",
     "lint": "eslint"
   },
   "dependencies": {

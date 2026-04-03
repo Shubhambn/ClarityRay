@@ -1,13 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;700&display=swap');
 @import "tailwindcss";
 
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
 :root {
+  --g: #0f6e56;
+  --gd: #085041;
+  --gl: #e1f5ee;
+  --gm: #1d9e75;
+  --ink: #0d0d0d;
+  --ink2: #3a3a3a;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --off: #f9f8f6;
   color-scheme: light;
 }
 
+html,
 body {
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #0b1120;
-  color: #e5e7eb;
+  min-height: 100%;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
@@ -15,33 +37,16 @@ a {
   text-decoration: none;
 }
 
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.5rem;
-  background: #2563eb;
-  padding: 0.5rem 1rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: #ffffff;
-  transition: opacity 150ms ease;
+.serif {
+  font-family: 'DM Serif Display', serif;
 }
 
-.btn:hover {
-  opacity: 0.9;
+.focus-ring {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--gm) 35%, transparent);
 }
 
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.card {
-  border-radius: 1rem;
-  border: 1px solid rgb(255 255 255 / 0.1);
-  background: rgb(255 255 255 / 0.05);
-  padding: 1rem;
-  box-shadow: 0 10px 20px rgb(0 0 0 / 0.2);
-  backdrop-filter: blur(8px);
+.page-shell {
+  width: min(1120px, 100% - 2rem);
+  margin-inline: auto;
 }

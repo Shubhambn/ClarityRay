@@ -1,17 +1,25 @@
-import Link from 'next/link';
+import { ShieldCheck } from 'lucide-react';
+import { PageContainer } from '@/components/ui/layout';
+import { HeroSection } from '@/sections/landing/HeroSection';
+import { FlowCardsSection } from '@/sections/landing/FlowCardsSection';
 
 export default function Home() {
   return (
-    <main className="card">
-      <div className="space-y-4">
-        <h2 className="text-xl font-semibold text-white">Welcome to ClarityRay</h2>
-        <p className="text-sm text-slate-300">
-          This browser-only demo screens chest X-rays locally using ONNX Runtime Web. No data leaves your device.
-        </p>
-        <Link className="btn" href="/analyze">
-          Go to Analyzer
-        </Link>
-      </div>
+    <main className="min-h-screen bg-white">
+      <header className="border-b border-[var(--border)] bg-white">
+        <PageContainer className="flex items-center justify-between py-4">
+          <p className="text-[17px] font-medium tracking-[-0.5px] text-[var(--ink)]">
+            Clarity<span className="text-[var(--g)]">Ray</span>
+          </p>
+          <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+            <ShieldCheck size={14} className="text-[var(--gm)]" />
+            Local-first · Screening only
+          </div>
+        </PageContainer>
+      </header>
+
+      <HeroSection />
+      <FlowCardsSection />
     </main>
   );
 }
