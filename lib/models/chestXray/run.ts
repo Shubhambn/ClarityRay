@@ -1,3 +1,4 @@
+// LEGACY ONLY: reference code path, not used by active runtime.
 import * as ort from 'onnxruntime-web';
 import { modelConfig } from './config';
 

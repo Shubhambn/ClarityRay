@@ -1,3 +1,4 @@
+// LEGACY ONLY: reference code path, not used by active runtime.
 import { modelConfig } from './config';
 
 type InputSource = HTMLImageElement | HTMLCanvasElement;

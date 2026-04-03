@@ -3,44 +3,53 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
 
 from .errors import UnsupportedFormatError
 
 ZIP_MAGIC = b"PK"
 HDF5_MAGIC = b"\x89HDF\r\n\x1a\n"
-SUPPORTED_FORMATS = "onnx, pytorch (.pt/.pth), keras (.h5), tensorflow (.pb or SavedModel directory)"
+SUPPORTED_FORMATS_TEXT = (
+    "onnx\n"
+    "pytorch (.pt/.pth)\n"
+    "keras (.h5)\n"
+    "tensorflow (.pb or saved_model dir)"
+)
 
 
-def _install_command_for_format(detected_format: str) -> str:
-    if detected_format == "pytorch":
-        return "pip install -e .[pytorch]"
-    if detected_format in {"keras", "tensorflow"}:
-        return "pip install -e .[keras]"
-    return "pip install -e ."
+def _build_fix_hint(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".pt", ".pth"}:
+        return "Install PyTorch support: pip install clarityray[pytorch]"
+    if suffix in {".h5", ".pb"}:
+        return "Install TensorFlow support: pip install clarityray[keras]"
+    if path.is_dir() and (path / "saved_model.pb").exists():
+        return "Install TensorFlow support: pip install clarityray[keras]"
+    return "Install required converter extras for your model format."
 
 
-def _raise_unsupported(path: Path, detected_format: str) -> None:
+def _raise_unsupported(path: Path) -> None:
     extension = path.suffix.lower() if path.is_file() else "<dir>"
-    install_cmd = _install_command_for_format(detected_format)
     raise UnsupportedFormatError(
         message=(
-            f"Unsupported model format for '{path}'. Found extension: '{extension or '<none>'}'. "
-            f"Supported formats: {SUPPORTED_FORMATS}. "
-            f"Install command for detected format '{detected_format}': {install_cmd}"
+            f"Unsupported model format for '{path}'. "
+            f"Detected extension: '{extension or '<none>'}'. "
+            f"Supported formats:\n{SUPPORTED_FORMATS_TEXT}"
         ),
-        fix_hint=install_cmd,
+        fix_hint=_build_fix_hint(path),
     )
 
 
 def detect_framework(filepath: str) -> str:
-    """Detect a model framework from a path using extension + file signature checks."""
+    """Detect a model framework from model path and file signatures."""
     path = Path(filepath)
+
+    if not path.exists():
+        _raise_unsupported(path)
 
     if path.is_dir():
         if (path / "saved_model.pb").is_file():
             return "tensorflow"
-        _raise_unsupported(path, "unknown")
+        _raise_unsupported(path)
 
     suffix = path.suffix.lower()
 
@@ -48,27 +57,21 @@ def detect_framework(filepath: str) -> str:
         return "onnx"
 
     if suffix in {".pt", ".pth"}:
-        try:
-            with path.open("rb") as f:
-                if f.read(2) == ZIP_MAGIC:
-                    return "pytorch"
-        except OSError:
-            pass
-        _raise_unsupported(path, "pytorch")
+        with path.open("rb") as f:
+            if f.read(2) == ZIP_MAGIC:
+                return "pytorch"
+        _raise_unsupported(path)
 
     if suffix == ".h5":
-        try:
-            with path.open("rb") as f:
-                if f.read(8) == HDF5_MAGIC:
-                    return "keras"
-        except OSError:
-            pass
-        _raise_unsupported(path, "keras")
+        with path.open("rb") as f:
+            if f.read(8) == HDF5_MAGIC:
+                return "keras"
+        _raise_unsupported(path)
 
     if suffix == ".pb":
         return "tensorflow"
 
-    _raise_unsupported(path, "unknown")
+    _raise_unsupported(path)
 
 
 def detect_format(model_path: str) -> str:
@@ -77,7 +80,6 @@ def detect_format(model_path: str) -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python -m clarityray.detect <path>")
-        raise SystemExit(2)
+    import sys
+
     print(detect_framework(sys.argv[1]))

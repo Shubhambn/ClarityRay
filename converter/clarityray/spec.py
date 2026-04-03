@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -87,6 +88,14 @@ def _validate_schema(instance: dict[str, Any], schema: dict[str, Any]) -> None:
     )
 
 
+def _compute_sha256(path: str) -> str:
+    hasher = hashlib.sha256()
+    with Path(path).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def generate_spec(
     onnx_path: str,
     model_id: str,
@@ -134,6 +143,7 @@ def generate_spec(
         "bodypart": bodypart,
         "modality": modality,
         "model": {"file": onnx_path, "format": "onnx"},
+        "integrity": {"sha256": _compute_sha256(onnx_path)},
         "input": {
             "shape": input_shape,
             "layout": "NCHW",
@@ -150,7 +160,7 @@ def generate_spec(
         },
         "thresholds": {
             "possible_finding": 0.5,
-            "low_confidence": 0.2,
+            "low_confidence": 0.25,
             "validation_status": "unvalidated",
         },
     }

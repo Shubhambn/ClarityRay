@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import type { HeatmapData } from '@/lib/models/chestXray/heatmap';
+import type { HeatmapData } from '@/lib/clarity/postprocess';
 
 interface GradCAMViewerProps {
   imageUrl?: string | null;
