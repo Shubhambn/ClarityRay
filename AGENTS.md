@@ -100,3 +100,12 @@ All user-facing result text must use:
 
 The disclaimer and plain summary text in translateResults() must not be changed
 without also updating the SafeResult interface.
+
+## Threshold Values
+
+Thresholds (possible_finding, low_confidence) live in clarity.json.
+They are NOT hardcoded in postprocess.ts.
+Default values: possible_finding: 0.5, low_confidence: 0.25,"validation_status": "unvalidated"
+These defaults are reasonable but unvalidated.
+Each model's clarity.json should declare its own validated thresholds
+based on testing against real data.
