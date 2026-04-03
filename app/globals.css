@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;700&display=swap');
 @import "tailwindcss";
 
 * {
@@ -8,16 +8,14 @@
 }
 
 :root {
-  --g: #0f6e56;
-  --gd: #085041;
-  --gl: #e1f5ee;
-  --gm: #1d9e75;
-  --ink: #0d0d0d;
-  --ink2: #3a3a3a;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --off: #f9f8f6;
-  color-scheme: light;
+  --neon-green: #22c55e;
+  --dark-bg: #000;
+  --grid-color: rgba(34, 197, 94, 0.04);
+  --scanline-color: rgba(34, 197, 94, 0.012);
+  --border-color: rgba(34, 197, 94, 0.2);
+  --text-muted: rgba(255, 255, 255, 0.5);
+  --text-light: rgba(255, 255, 255, 0.7);
+  color-scheme: dark;
 }
 
 html,
@@ -27,8 +25,8 @@ body {
 
 body {
   font-family: 'DM Sans', sans-serif;
-  color: var(--ink);
-  background: #fff;
+  color: #fff;
+  background: var(--dark-bg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -41,12 +39,96 @@ a {
   font-family: 'DM Serif Display', serif;
 }
 
+.mono {
+  font-family: 'DM Mono', monospace;
+}
+
 .focus-ring {
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--gm) 35%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--neon-green) 35%, transparent);
 }
 
 .page-shell {
   width: min(1120px, 100% - 2rem);
   margin-inline: auto;
+}
+
+/* SCANLINES OVERLAY */
+.scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    var(--scanline-color) 2px,
+    var(--scanline-color) 4px
+  );
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* GRID BACKGROUND */
+.grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 40px 40px;
+  z-index: 1;
+}
+
+/* VIGNETTE */
+.vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.85) 100%);
+  z-index: 9;
+  pointer-events: none;
+}
+
+/* KEYFRAME ANIMATIONS */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sweep {
+  0% {
+    top: -2px;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes heatPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
 }
