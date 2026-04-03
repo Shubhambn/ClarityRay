@@ -139,13 +139,13 @@ after being already convinced by the web version.
 ## Tech Stack (Minimal)
 
 ```
-Frontend:    Next.js 14 (already on Vercel — you have this)
+Frontend:    Next.js 14 (already on Vercel — this is already set up)
 ML Runtime:  ONNX Runtime Web (runs model in browser WebAssembly)
 Model:       DenseNet121 → converted to .onnx format (one-time)
 GradCAM:     Computed client-side in JavaScript after inference
 DICOM:       cornerstone.js or dicom-parser (client-side only)
 Storage:     None — no database, no backend, no server
-Hosting:     Vercel (free tier — you already have this)
+Hosting:     Vercel (free tier — already available)
 ```
 
 Total backend code: zero lines.
@@ -361,7 +361,7 @@ a safe, plain-language result object with:
 
 Important constraints:
 - NEVER use language that implies diagnosis
-- NEVER say 'you have' or 'patient has'
+- NEVER use direct patient-disease claim wording
 - ALWAYS include 'consult a physician' language
 - Threshold calibration: flag as finding only if confidence > 0.3
   (based on NIH ChestX-ray14 paper recommendations)
@@ -1082,9 +1082,9 @@ Must enforce:
 
 ❌ Never use:
 
-* "you have"
-* "diagnosed"
-* "confirmed"
+* direct diagnosis claim wording
+* definitive diagnosis terms
+* absolute confirmation terms
 
 Always include:
 "This is a screening tool, not a diagnosis"

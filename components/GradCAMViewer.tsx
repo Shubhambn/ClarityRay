@@ -93,9 +93,9 @@ export function GradCAMViewer({ imageUrl, heatmap }: GradCAMViewerProps) {
         )}
       </div>
 
-      <p className="text-xs text-slate-400">
-        This map is generated from image contrast and model confidence weighting. It is a visual aid only and not a
-        diagnosis.
+      <p className="text-xs text-gray-500 italic mt-2">
+        (i) Attention map is a visualization aid only. It approximates regions the model weighted during analysis and
+        is not a precise localization of disease. Not a diagnostic feature.
       </p>
     </div>
   );
