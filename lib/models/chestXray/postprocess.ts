@@ -29,7 +29,8 @@ function softmax(logits: Float32Array): Float32Array {
 
 export function postprocessOutput(raw: Float32Array): ClarityRayResult {
   const probabilities = softmax(raw);
-
+  console.log('Probabilities length:', probabilities.length);
+console.log('Probabilities:', probabilities);
   const findings = modelConfig.labels
     .map((label, idx) => ({ label, confidence: probabilities[idx] ?? 0 }))
     .sort((a, b) => b.confidence - a.confidence);
