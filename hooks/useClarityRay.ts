@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as ort from 'onnxruntime-web';
 import type { HeatmapData } from '@/lib/models/chestXray/heatmap';
 import { generateHeatmap } from '@/lib/models/chestXray/heatmap';
-import { modelConfig } from '@/lib/models/chestXray/config';
-import { preprocessImage } from '@/lib/models/chestXray/preprocess';
-import { postprocessOutput, type ClarityRayResult } from '@/lib/models/chestXray/postprocess';
+import type { ClarityRayResult } from '@/lib/models/chestXray/postprocess';
+import type { ClaritySpec } from '@/lib/clarity/types';
+import { preprocessImage } from '@/lib/clarity/preprocess';
+import { runInference, sessionCache } from '@/lib/clarity/run';
+import { postprocess, toProbabilities } from '@/lib/clarity/postprocess';
 
 type ClarityRayStatus =
   | 'idle'
@@ -27,7 +28,6 @@ export type AnalysisState = {
 
 const SUPPORTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-let cachedSession: ort.InferenceSession | null = null;
 
 function loadImageFromFile(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -64,7 +64,7 @@ function getUserFriendlyError(err: unknown): string {
   return message;
 }
 
-export function useClarityRay() {
+export function useClarityRay(spec: ClaritySpec) {
   const imageUrlRef = useRef<string | null>(null);
 
   const [state, setState] = useState<AnalysisState>({
@@ -114,25 +114,8 @@ export function useClarityRay() {
           throw new Error('WebAssembly is not supported in this browser.');
         }
 
-        let session = cachedSession;
-
-        if (!session) {
+        if (!sessionCache.has(spec.id)) {
           setState((prev: AnalysisState) => ({ ...prev, status: 'loading_model' }));
-          try {
-            session = await ort.InferenceSession.create(modelConfig.modelPath, {
-              executionProviders: ['wasm']
-            });
-            cachedSession = session;
-          } catch {
-            const message = 'We could not load the AI model in your browser. Please refresh and try again.';
-            setState((prev: AnalysisState) => ({
-              ...prev,
-              status: 'error',
-              loading: false,
-              error: message
-            }));
-            return null;
-          }
         }
 
         setState((prev: AnalysisState) => ({ ...prev, status: 'preprocessing' }));
@@ -141,50 +124,35 @@ export function useClarityRay() {
           window.requestAnimationFrame(() => resolve());
         });
 
-        const image = await loadImageFromFile(file);
-        const input = preprocessImage(image);
+        const input = await preprocessImage(file, spec);
 
         setState((prev: AnalysisState) => ({ ...prev, status: 'running' }));
 
-        const [width, height] = modelConfig.inputSize;
-        const expectedLength = 1 * 3 * width * height;
+        const rawOutput = await runInference(input, spec);
+        const safeResult = postprocess(rawOutput, spec);
+        const probabilities = toProbabilities(rawOutput, spec);
 
-        if (input.length !== expectedLength) {
-          throw new Error('Invalid image tensor shape. Expected [1, 3, 224, 224].');
-        }
+        const findings: { label: string; confidence: number }[] = spec.output.classes
+          .map((label, idx) => ({ label, confidence: probabilities[idx] ?? 0 }))
+          .sort((a, b) => b.confidence - a.confidence);
 
-        const inputName = session.inputNames[0];
-        const outputName = session.outputNames[0];
-
-        if (!inputName) {
-          throw new Error('Model input name not found.');
-        }
-
-        if (!outputName) {
-          throw new Error('Model output name not found.');
-        }
-
-        const inputTensor = new ort.Tensor('float32', input, [1, 3, height, width]);
-        const outputs = await session.run({ [inputName]: inputTensor });
-        const outputTensor = outputs[outputName] ?? outputs[Object.keys(outputs)[0]];
-
-        if (!outputTensor?.data) {
-          throw new Error('Model produced no output.');
-        }
-
-        const output =
-          outputTensor.data instanceof Float32Array
-            ? outputTensor.data
-            : Float32Array.from(outputTensor.data as ArrayLike<number>);
-
-        const result = postprocessOutput(output);
+        const result: ClarityRayResult = {
+          primaryFinding: safeResult.primaryFinding,
+          safetyTier: safeResult.safetyTier,
+          findings,
+          explanation: safeResult.plainSummary,
+          disclaimer: safeResult.disclaimer
+        };
 
         if (!result || result.findings.length === 0) {
           throw new Error('Analysis completed, but we could not interpret the output. Please try again.');
         }
 
-        const imageUrl = URL.createObjectURL(file);
-        const abnormalConfidence = result.findings.find((finding) => finding.label === 'Lung Cancer')?.confidence ?? 0;
+    const image = await loadImageFromFile(file);
+    const imageUrl = URL.createObjectURL(file);
+    const normalClassIndex = spec.output.classes.findIndex((label) => /normal/i.test(label));
+    const normalProbability = normalClassIndex >= 0 ? probabilities[normalClassIndex] ?? 0 : 0;
+    const abnormalConfidence = Math.max(0, 1 - normalProbability);
         const heatmap = generateHeatmap(image, abnormalConfidence);
 
         if (imageUrlRef.current) {
@@ -205,7 +173,7 @@ export function useClarityRay() {
         return null;
       }
     },
-    []
+    [spec]
   );
 
   const reset = useCallback(() => {

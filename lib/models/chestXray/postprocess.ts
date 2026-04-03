@@ -3,12 +3,12 @@ import { modelConfig, ModelLabel } from './config';
 export type ClarityRayResult = {
   primaryFinding: string;
   safetyTier: 'possible_finding' | 'no_finding' | 'low_confidence';
-  findings: { label: ModelLabel; confidence: number }[];
+  findings: { label: string; confidence: number }[];
   explanation: string;
   disclaimer: string;
 };
 
-interface SafeResult {
+export interface SafeResult {
   primaryFinding: string;
   confidencePercent: number;
   safetyTier: 'possible_finding' | 'no_finding' | 'low_confidence';
@@ -16,8 +16,7 @@ interface SafeResult {
   disclaimer: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function translateResults(probs: number[], labels: string[]): SafeResult {
+export function translateResults(probs: number[], labels: string[]): SafeResult {
   const lungCancerProb = probs[1];
   const normalProb = probs[0];
 
