@@ -1,7 +1,7 @@
 'use client';
 
 import type { AnalysisStatus } from '@/hooks/useClarityRay';
-import type { ClarityRayResult } from '@/lib/models/chestXray/postprocess';
+import type { ClarityRayResult } from '@/lib/clarity/postprocess';
 
 interface ResultsPanelProps {
   result: ClarityRayResult | null;

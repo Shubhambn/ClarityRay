@@ -14,7 +14,8 @@
     "output",
     "safety",
     "bodypart",
-    "modality"
+    "modality",
+    "thresholds"
   ],
   "properties": {
     "id": {
@@ -52,6 +53,17 @@
         },
         "format": {
           "type": "string"
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
         }
       }
     },
@@ -157,5 +169,5 @@
         }
       }
     }
-  }
+  } 
 }

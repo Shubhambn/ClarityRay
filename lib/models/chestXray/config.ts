@@ -1,3 +1,4 @@
+// LEGACY ONLY: reference code path, not used by active runtime.
 export const modelConfig = {
   modelPath: '/chestxray_densenet121.onnx',
   inputSize: [224, 224] as const,

@@ -1,3 +1,4 @@
+// LEGACY ONLY: reference code path, not used by active runtime.
 import { modelConfig, ModelLabel } from './config';
 
 export type ClarityRayResult = {

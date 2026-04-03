@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { HeatmapData } from '@/lib/models/chestXray/heatmap';
-import { generateHeatmap } from '@/lib/models/chestXray/heatmap';
-import type { ClarityRayResult } from '@/lib/models/chestXray/postprocess';
+import * as ort from 'onnxruntime-web';
+import {
+  generateHeatmap,
+  postprocess,
+  toProbabilities,
+  type ClarityRayResult,
+  type HeatmapData
+} from '@/lib/clarity/postprocess';
 import type { ClaritySpec } from '@/lib/clarity/types';
 import { preprocessImage } from '@/lib/clarity/preprocess';
 import { runInference, sessionCache } from '@/lib/clarity/run';
-import { postprocess, toProbabilities } from '@/lib/clarity/postprocess';
+import { fetchManifest, getCurrentModel } from '@/lib/clarity/manifest';
+import { fetchSpec } from '@/lib/clarity/specLoader';
+import { loadModel } from '@/lib/clarity/loader';
 
 type ClarityRayStatus =
   | 'idle'
@@ -66,6 +73,8 @@ function getUserFriendlyError(err: unknown): string {
 
 export function useClarityRay(spec: ClaritySpec) {
   const imageUrlRef = useRef<string | null>(null);
+  const [activeSpec, setActiveSpec] = useState<ClaritySpec>(spec);
+  const [session, setSession] = useState<ort.InferenceSession | null>(null);
 
   const [state, setState] = useState<AnalysisState>({
     status: 'idle',
@@ -75,6 +84,48 @@ export function useClarityRay(spec: ClaritySpec) {
     imageUrl: null,
     heatmap: null
   });
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const initializeSession = async () => {
+      try {
+        const manifest = await fetchManifest();
+        const currentModel = getCurrentModel(manifest);
+        const modelUrl = currentModel.url;
+        const specUrl = currentModel.spec_url;
+
+        const fetchedSpec = await fetchSpec(specUrl);
+        const modelBuffer = await loadModel(modelUrl, fetchedSpec);
+        const createdSession = await ort.InferenceSession.create(modelBuffer);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setActiveSpec(fetchedSpec);
+        setSession(createdSession);
+        sessionCache.set(fetchedSpec.id, createdSession);
+      } catch (err) {
+        if (!isMounted) {
+          return;
+        }
+
+        setState((prev: AnalysisState) => ({
+          ...prev,
+          status: 'error',
+          loading: false,
+          error: getUserFriendlyError(err)
+        }));
+      }
+    };
+
+    void initializeSession();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const runAnalysis = useCallback(
     async (file: File) => {
@@ -114,7 +165,7 @@ export function useClarityRay(spec: ClaritySpec) {
           throw new Error('WebAssembly is not supported in this browser.');
         }
 
-        if (!sessionCache.has(spec.id)) {
+        if (!session && !sessionCache.has(activeSpec.id)) {
           setState((prev: AnalysisState) => ({ ...prev, status: 'loading_model' }));
         }
 
@@ -124,15 +175,15 @@ export function useClarityRay(spec: ClaritySpec) {
           window.requestAnimationFrame(() => resolve());
         });
 
-        const input = await preprocessImage(file, spec);
+        const input = await preprocessImage(file, activeSpec);
 
         setState((prev: AnalysisState) => ({ ...prev, status: 'running' }));
 
-        const rawOutput = await runInference(input, spec);
-        const safeResult = postprocess(rawOutput, spec);
-        const probabilities = toProbabilities(rawOutput, spec);
+        const rawOutput = await runInference(input, activeSpec);
+        const safeResult = postprocess(rawOutput, activeSpec);
+        const probabilities = toProbabilities(rawOutput, activeSpec);
 
-        const findings: { label: string; confidence: number }[] = spec.output.classes
+        const findings: { label: string; confidence: number }[] = activeSpec.output.classes
           .map((label, idx) => ({ label, confidence: probabilities[idx] ?? 0 }))
           .sort((a, b) => b.confidence - a.confidence);
 
@@ -150,7 +201,7 @@ export function useClarityRay(spec: ClaritySpec) {
 
     const image = await loadImageFromFile(file);
     const imageUrl = URL.createObjectURL(file);
-    const normalClassIndex = spec.output.classes.findIndex((label) => /normal/i.test(label));
+    const normalClassIndex = activeSpec.output.classes.findIndex((label) => /normal/i.test(label));
     const normalProbability = normalClassIndex >= 0 ? probabilities[normalClassIndex] ?? 0 : 0;
     const abnormalConfidence = Math.max(0, 1 - normalProbability);
         const heatmap = generateHeatmap(image, abnormalConfidence);
@@ -173,7 +224,7 @@ export function useClarityRay(spec: ClaritySpec) {
         return null;
       }
     },
-    [spec]
+    [activeSpec, session]
   );
 
   const reset = useCallback(() => {

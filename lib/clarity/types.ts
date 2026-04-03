@@ -3,6 +3,10 @@ export interface ClarityModelSpec {
   format?: string;
 }
 
+export interface ClarityIntegritySpec {
+  sha256: string;
+}
+
 export interface ClarityInputSpec {
   shape: number[];
   layout?: string;
@@ -37,10 +41,11 @@ export interface ClaritySpec {
   bodypart: string;
   modality: string;
   model: ClarityModelSpec;
+  integrity: ClarityIntegritySpec;
   input: ClarityInputSpec;
   output: ClarityOutputSpec;
   safety: ClaritySafetySpec;
-  thresholds?: ClarityThresholdsSpec;
+  thresholds: ClarityThresholdsSpec;
 }
 
 function invalid(field: string, problem: string, expected: string): never {
@@ -235,6 +240,27 @@ function parseModelSpec(value: unknown, path: string): ClarityModelSpec {
   return { file, format };
 }
 
+function parseSha256(value: unknown, path: string): string {
+  const result = parseNonEmptyString(value, path).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(result)) {
+    invalid(path, `"${result}"`, "64-character hexadecimal SHA-256 string");
+  }
+
+  return result;
+}
+
+function parseIntegritySpec(value: unknown, path: string): ClarityIntegritySpec {
+  if (!isRecord(value)) {
+    invalid(path, typeof value, "object");
+  }
+
+  checkNoExtraKeys(value, ["sha256"], path);
+
+  const sha256 = parseSha256(requireField(value, "sha256", `${path}.sha256`), `${path}.sha256`);
+
+  return { sha256 };
+}
+
 function parseInputSpec(value: unknown, path: string): ClarityInputSpec {
   if (!isRecord(value)) {
     invalid(path, typeof value, "object");
@@ -362,6 +388,7 @@ export function validateSpec(json: unknown): ClaritySpec {
       "version",
       "certified",
       "model",
+    "integrity",
       "input",
       "output",
       "safety",
@@ -380,13 +407,11 @@ export function validateSpec(json: unknown): ClaritySpec {
   const modality = parseNonEmptyString(requireField(json, "modality", "modality"), "modality");
 
   const model = parseModelSpec(requireField(json, "model", "model"), "model");
+  const integrity = parseIntegritySpec(requireField(json, "integrity", "integrity"), "integrity");
   const input = parseInputSpec(requireField(json, "input", "input"), "input");
   const output = parseOutputSpec(requireField(json, "output", "output"), "output");
   const safety = parseSafetySpec(requireField(json, "safety", "safety"), "safety");
-
-  const thresholdsValue = hasOwn(json, "thresholds") ? json["thresholds"] : undefined;
-  const thresholds =
-    thresholdsValue === undefined ? undefined : parseThresholdsSpec(thresholdsValue, "thresholds");
+  const thresholds = parseThresholdsSpec(requireField(json, "thresholds", "thresholds"), "thresholds");
 
   return {
     id,
@@ -396,6 +421,7 @@ export function validateSpec(json: unknown): ClaritySpec {
     bodypart,
     modality,
     model,
+    integrity,
     input,
     output,
     safety,
