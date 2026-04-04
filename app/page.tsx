@@ -89,6 +89,7 @@ export default function Home() {
             <div style={{ display: 'flex', gap: '0.875rem', flexWrap: 'wrap' }}>
               <Link
                 href="/analysis"
+                className="home-cta-primary"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -104,13 +105,12 @@ export default function Home() {
                   textDecoration: 'none',
                   transition: 'filter var(--transition-base)',
                 }}
-                onMouseOver={e => (e.currentTarget.style.filter = 'brightness(1.1)')}
-                onMouseOut={e => (e.currentTarget.style.filter = 'brightness(1)')}
               >
                 Start Analysis →
               </Link>
               <Link
                 href="/models"
+                className="home-cta-secondary"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -126,8 +126,6 @@ export default function Home() {
                   textDecoration: 'none',
                   transition: 'border-color var(--transition-base)',
                 }}
-                onMouseOver={e => (e.currentTarget.style.borderColor = 'var(--border-accent)')}
-                onMouseOut={e => (e.currentTarget.style.borderColor = 'var(--border-default)')}
               >
                 Browse Models
               </Link>
@@ -450,6 +448,7 @@ export default function Home() {
             {/* Researcher */}
             <Link
               href="/onboarding?persona=researcher"
+              className="persona-card persona-card-researcher"
               style={{
                 flex: '1 1 0',
                 display: 'flex',
@@ -461,14 +460,6 @@ export default function Home() {
                 borderRadius: 'var(--radius-lg)',
                 textDecoration: 'none',
                 transition: 'border-color var(--transition-base), background var(--transition-base)',
-              }}
-              onMouseOver={e => {
-                e.currentTarget.style.borderColor = 'rgba(59,130,246,0.55)';
-                e.currentTarget.style.background = 'rgba(59,130,246,0.05)';
-              }}
-              onMouseOut={e => {
-                e.currentTarget.style.borderColor = 'rgba(59,130,246,0.25)';
-                e.currentTarget.style.background = 'var(--bg-panel)';
               }}
             >
               <div
@@ -509,6 +500,7 @@ export default function Home() {
             {/* Doctor */}
             <Link
               href="/onboarding?persona=doctor"
+              className="persona-card persona-card-doctor"
               style={{
                 flex: '1 1 0',
                 display: 'flex',
@@ -520,14 +512,6 @@ export default function Home() {
                 borderRadius: 'var(--radius-lg)',
                 textDecoration: 'none',
                 transition: 'border-color var(--transition-base), background var(--transition-base)',
-              }}
-              onMouseOver={e => {
-                e.currentTarget.style.borderColor = 'var(--border-accent-strong)';
-                e.currentTarget.style.background = 'var(--accent-primary-glow)';
-              }}
-              onMouseOut={e => {
-                e.currentTarget.style.borderColor = 'var(--border-accent)';
-                e.currentTarget.style.background = 'var(--bg-panel)';
               }}
             >
               <div
@@ -568,6 +552,7 @@ export default function Home() {
             {/* Patient */}
             <Link
               href="/onboarding?persona=patient"
+              className="persona-card persona-card-patient"
               style={{
                 flex: '1 1 0',
                 display: 'flex',
@@ -579,14 +564,6 @@ export default function Home() {
                 borderRadius: 'var(--radius-lg)',
                 textDecoration: 'none',
                 transition: 'border-color var(--transition-base), background var(--transition-base)',
-              }}
-              onMouseOver={e => {
-                e.currentTarget.style.borderColor = 'var(--border-default)';
-                e.currentTarget.style.background = 'var(--bg-elevated)';
-              }}
-              onMouseOut={e => {
-                e.currentTarget.style.borderColor = 'var(--border-subtle)';
-                e.currentTarget.style.background = 'var(--bg-panel)';
               }}
             >
               <div
@@ -802,13 +779,12 @@ export default function Home() {
               <Link
                 key={label}
                 href={href}
+                className="footer-link"
                 style={{
                   color: 'var(--text-tertiary)',
                   textDecoration: 'none',
                   transition: 'color var(--transition-base)',
                 }}
-                onMouseOver={e => (e.currentTarget.style.color = 'var(--text-secondary)')}
-                onMouseOut={e => (e.currentTarget.style.color = 'var(--text-tertiary)')}
               >
                 {label}
               </Link>
@@ -816,6 +792,35 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      <style>{`
+        .home-cta-primary:hover {
+          filter: brightness(1.1);
+        }
+
+        .home-cta-secondary:hover {
+          border-color: var(--border-accent) !important;
+        }
+
+        .persona-card-researcher:hover {
+          border-color: rgba(59,130,246,0.55) !important;
+          background: rgba(59,130,246,0.05) !important;
+        }
+
+        .persona-card-doctor:hover {
+          border-color: var(--border-accent-strong) !important;
+          background: var(--accent-primary-glow) !important;
+        }
+
+        .persona-card-patient:hover {
+          border-color: var(--border-default) !important;
+          background: var(--bg-elevated) !important;
+        }
+
+        .footer-link:hover {
+          color: var(--text-secondary) !important;
+        }
+      `}</style>
     </div>
   );
 }
