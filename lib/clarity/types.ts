@@ -41,7 +41,7 @@ export interface ClaritySpec {
   bodypart: string;
   modality: string;
   model: ClarityModelSpec;
-  integrity: ClarityIntegritySpec;
+  integrity?: ClarityIntegritySpec;
   input: ClarityInputSpec;
   output: ClarityOutputSpec;
   safety: ClaritySafetySpec;
@@ -388,7 +388,7 @@ export function validateSpec(json: unknown): ClaritySpec {
       "version",
       "certified",
       "model",
-    "integrity",
+      "integrity",
       "input",
       "output",
       "safety",
@@ -407,7 +407,13 @@ export function validateSpec(json: unknown): ClaritySpec {
   const modality = parseNonEmptyString(requireField(json, "modality", "modality"), "modality");
 
   const model = parseModelSpec(requireField(json, "model", "model"), "model");
-  const integrity = parseIntegritySpec(requireField(json, "integrity", "integrity"), "integrity");
+
+  // integrity is OPTIONAL — specs without sha256 pass validation (hook warns and continues)
+  const integrityValue = hasOwn(json, "integrity") ? json["integrity"] : undefined;
+  const integrity = integrityValue !== undefined
+    ? parseIntegritySpec(integrityValue, "integrity")
+    : undefined;
+
   const input = parseInputSpec(requireField(json, "input", "input"), "input");
   const output = parseOutputSpec(requireField(json, "output", "output"), "output");
   const safety = parseSafetySpec(requireField(json, "safety", "safety"), "safety");
@@ -421,7 +427,7 @@ export function validateSpec(json: unknown): ClaritySpec {
     bodypart,
     modality,
     model,
-    integrity,
+    ...(integrity !== undefined ? { integrity } : {}),
     input,
     output,
     safety,
