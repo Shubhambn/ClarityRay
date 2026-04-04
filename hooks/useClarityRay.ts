@@ -123,23 +123,40 @@ async function resolveModelUrls(
     const apiRes = await fetch(`/api/models/${slug}`, { cache: 'no-cache' });
     if (apiRes.ok) {
       const json: unknown = await apiRes.json();
-      if (
-        typeof json === 'object' &&
-        json !== null &&
-        'clarity_url' in json &&
-        typeof (json as Record<string, unknown>).clarity_url === 'string'
-      ) {
+      if (typeof json === 'object' && json !== null) {
         const record = json as Record<string, unknown>;
-        const specUrl = record.clarity_url as string;
-        const modelUrl =
-          typeof record.model_url === 'string'
-            ? record.model_url
-            : `/models/${slug}/model.onnx`;
-        return { specUrl, modelUrl };
+
+        // Flat format: { clarity_url, model_url }
+        if (typeof record.clarity_url === 'string') {
+          const specUrl = record.clarity_url;
+          const modelUrl =
+            typeof record.model_url === 'string'
+              ? record.model_url
+              : `/models/${slug}/model.onnx`;
+          return { specUrl, modelUrl };
+        }
+
+        // Legacy nested format: { current_version: { clarity_url, onnx_url } }
+        if (
+          typeof record.current_version === 'object' &&
+          record.current_version !== null
+        ) {
+          const cv = record.current_version as Record<string, unknown>;
+          if (typeof cv.clarity_url === 'string') {
+            const specUrl = cv.clarity_url;
+            const modelUrl =
+              typeof cv.onnx_url === 'string'
+                ? cv.onnx_url
+                : typeof cv.model_url === 'string'
+                  ? cv.model_url
+                  : `/models/${slug}/model.onnx`;
+            return { specUrl, modelUrl };
+          }
+        }
       }
     }
   } catch {
-    // API route not present — fall through to manifest
+    // API route not present or backend unavailable — fall through to manifest
   }
 
   // Attempt 2 — static manifest

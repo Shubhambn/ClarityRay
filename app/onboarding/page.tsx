@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { Suspense, useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { usePersona } from '@/lib/persona/context';
 import type { Persona } from '@/lib/persona/context';
@@ -279,9 +279,10 @@ function StepSafetyAck({
 }
 
 /* ══════════════════════════════════════════
-   Main page component
+   Inner component — reads useSearchParams()
+   Must be wrapped in <Suspense> for SSR.
    ══════════════════════════════════════════ */
-export default function OnboardingPage() {
+function OnboardingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setPersona } = usePersona();
@@ -844,5 +845,17 @@ export default function OnboardingPage() {
         </div>
       </div>
     </>
+  );
+}
+
+/* ══════════════════════════════════════════
+   Page export — provides required Suspense
+   boundary for useSearchParams()
+   ══════════════════════════════════════════ */
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingContent />
+    </Suspense>
   );
 }

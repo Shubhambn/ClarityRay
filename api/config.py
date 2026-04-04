@@ -7,12 +7,11 @@ from functools import lru_cache
 
 @dataclass(frozen=True)
 class Settings:
-    supabase_url: str
-    supabase_key: str
-    r2_account_id: str
-    r2_access_key_id: str
-    r2_secret_access_key: str
-    r2_bucket_name: str
+    env: str
+    port: int
+    database_url: str
+    storage_type: str
+    base_public_url: str
     nextjs_origin: str
 
 
@@ -26,11 +25,10 @@ def _get_required_env(name: str) -> str:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
-        supabase_url=_get_required_env("SUPABASE_URL"),
-        supabase_key=_get_required_env("SUPABASE_KEY"),
-        r2_account_id=_get_required_env("R2_ACCOUNT_ID"),
-        r2_access_key_id=_get_required_env("R2_ACCESS_KEY_ID"),
-        r2_secret_access_key=_get_required_env("R2_SECRET_ACCESS_KEY"),
-        r2_bucket_name=_get_required_env("R2_BUCKET_NAME"),
+        env=os.getenv("ENV", "development"),
+        port=int(os.getenv("PORT", "8000")),
+        database_url=_get_required_env("DATABASE_URL"),
+        storage_type=os.getenv("STORAGE_TYPE", "local"),
+        base_public_url=os.getenv("BASE_PUBLIC_URL", "http://localhost:3000"),
         nextjs_origin=os.getenv("NEXTJS_ORIGIN", "http://localhost:3000"),
     )
