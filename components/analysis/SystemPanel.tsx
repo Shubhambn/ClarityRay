@@ -93,17 +93,35 @@ function ProbabilityBars({
   modelInfo: ModelInfo;
 }) {
   const probs = perClassProbabilities(result, modelInfo.outputClasses.length);
+
+  function clampProbability(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.min(1, Math.max(0, value));
+  }
+
   return (
     <div>
       <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
         OUTPUT PROBABILITIES
       </div>
       {modelInfo.outputClasses.map((cls, i) => {
-        const prob = probs[i] ?? 0;
+        const prob = clampProbability(probs[i] ?? 0);
         return (
           <div key={cls} style={{ marginBottom: 'var(--space-2)' }}>
             <div className="row-between">
-              <span className="mono">{cls}</span>
+              <span
+                className="mono"
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  paddingRight: 'var(--space-2)',
+                }}
+              >
+                {cls}
+              </span>
               <span className="mono">{Math.round(prob * 100)}%</span>
             </div>
             <div className="prob-bar-track">

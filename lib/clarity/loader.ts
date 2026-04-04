@@ -14,13 +14,10 @@ function getOptionalHash(spec: ClaritySpec): string | undefined {
 async function verifyBufferHash(
   buffer: ArrayBuffer,
   expectedHash: string,
-  source: "cache" | "db" | "network",
 ): Promise<void> {
   const actualHash = await sha256(buffer);
   if (actualHash !== expectedHash) {
-    throw new Error(
-      `Model integrity check failed (${source}): hash mismatch. Expected ${expectedHash}, got ${actualHash}.`,
-    );
+    throw new Error("Integrity verification failed");
   }
 }
 
@@ -29,12 +26,15 @@ export async function loadModel(
   spec: ClaritySpec,
 ): Promise<{ buffer: ArrayBuffer; integritySkipped: boolean }> {
   const expectedHash = getOptionalHash(spec);
+  if (!expectedHash) {
+    console.warn("Model loaded without integrity verification (sha256 not in spec)");
+  }
 
   // Cache API path
   const cacheBuffer = await getFromCache(url);
   if (cacheBuffer) {
     if (expectedHash) {
-      await verifyBufferHash(cacheBuffer, expectedHash, "cache");
+      await verifyBufferHash(cacheBuffer, expectedHash);
     }
     return { buffer: cacheBuffer, integritySkipped: !expectedHash };
   }
@@ -43,7 +43,7 @@ export async function loadModel(
   const dbBuffer = await getModel(url);
   if (dbBuffer) {
     if (expectedHash) {
-      await verifyBufferHash(dbBuffer, expectedHash, "db");
+      await verifyBufferHash(dbBuffer, expectedHash);
     }
     await saveToCache(url, new Response(dbBuffer));
     return { buffer: dbBuffer, integritySkipped: !expectedHash };
@@ -60,7 +60,7 @@ export async function loadModel(
   const networkBuffer = await networkResponse.arrayBuffer();
 
   if (expectedHash) {
-    await verifyBufferHash(networkBuffer, expectedHash, "network");
+    await verifyBufferHash(networkBuffer, expectedHash);
   }
 
   await saveToCache(url, new Response(networkBuffer));

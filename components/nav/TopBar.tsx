@@ -284,10 +284,17 @@ export default function TopBar({ status = 'idle' }: TopBarProps) {
           display: none;
           background: none;
           border: none;
-          padding: 6px;
+          width: 44px;
+          height: 44px;
+          min-width: 44px;
+          min-height: 44px;
+          padding: 0;
           cursor: pointer;
           color: var(--text-secondary);
           transition: color 0.15s;
+          align-items: center;
+          justify-content: center;
+          touch-action: manipulation;
         }
         .topbar-hamburger:hover {
           color: var(--text-primary);
@@ -338,8 +345,14 @@ export default function TopBar({ status = 'idle' }: TopBarProps) {
           color: var(--text-secondary);
           font-size: 0.875rem;
           cursor: pointer;
-          padding: 4px 8px;
+          min-width: 44px;
+          min-height: 44px;
+          padding: 0;
           transition: color 0.15s;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          touch-action: manipulation;
         }
         .topbar-drawer-close:hover {
           color: var(--text-primary);
@@ -347,6 +360,7 @@ export default function TopBar({ status = 'idle' }: TopBarProps) {
         .topbar-drawer-link {
           display: block;
           padding: 12px 20px;
+          min-height: 44px;
           font-family: var(--font-ui);
           font-size: 0.875rem;
           font-weight: 500;
@@ -354,6 +368,7 @@ export default function TopBar({ status = 'idle' }: TopBarProps) {
           text-decoration: none;
           border-left: 2px solid transparent;
           transition: color 0.15s, border-color 0.15s, background 0.15s;
+          touch-action: manipulation;
         }
         .topbar-drawer-link:hover {
           color: var(--text-primary);

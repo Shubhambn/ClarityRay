@@ -127,7 +127,9 @@ export default function AnalysisPage() {
                 background: 'rgba(239,68,68,0.15)',
                 border: '1px solid rgba(239,68,68,0.4)',
                 color: '#fca5a5',
-                padding: '4px 14px',
+                minHeight: '44px',
+                minWidth: '44px',
+                padding: '10px 14px',
                 borderRadius: '4px',
                 fontSize: '11px',
                 fontFamily: 'var(--font-mono)',
@@ -175,6 +177,8 @@ export default function AnalysisPage() {
 
         {/* Three-column layout */}
         <div
+          id="analysis-columns"
+          className="analysis-columns"
           style={{
             display: 'flex',
             gap: '12px',
@@ -183,32 +187,38 @@ export default function AnalysisPage() {
           }}
         >
           {/* Column 1 — Control Panel (280px fixed) */}
-          <ControlPanel
-            status={status}
-            modelInfo={modelInfo}
-            error={error}
-            onRun={handleRun}
-            onClear={handleClear}
-          />
+          <div className="analysis-col analysis-col--left">
+            <ControlPanel
+              status={status}
+              modelInfo={modelInfo}
+              error={error}
+              onRun={handleRun}
+              onClear={handleClear}
+            />
+          </div>
 
           {/* Column 2 — Scan Viewer (flex 1) */}
-          <ScanViewer
-            status={status}
-            imageUrl={imageUrl}
-            heatmap={heatmapRef.current}
-            fileName={selectedFile?.name}
-            fileSize={selectedFile?.size}
-          />
+          <div className="analysis-col analysis-col--center">
+            <ScanViewer
+              status={status}
+              imageUrl={imageUrl}
+              heatmap={heatmapRef.current}
+              fileName={selectedFile?.name}
+              fileSize={selectedFile?.size}
+            />
+          </div>
 
           {/* Column 3 — System Panel (320px fixed) */}
-          <SystemPanel
-            status={status}
-            result={result}
-            modelInfo={modelInfo}
-            error={error}
-            logs={logs}
-            onReset={reset}
-          />
+          <div className="analysis-col analysis-col--right">
+            <SystemPanel
+              status={status}
+              result={result}
+              modelInfo={modelInfo}
+              error={error}
+              logs={logs}
+              onReset={reset}
+            />
+          </div>
         </div>
 
         {/* Bottom strip — Log Panel */}
@@ -217,9 +227,39 @@ export default function AnalysisPage() {
 
       {/* Mobile: single column via responsive overrides */}
       <style>{`
-        @media (max-width: 900px) {
+        .analysis-columns {
+          min-width: 0;
+        }
+
+        .analysis-col {
+          min-width: 0;
+          display: flex;
+          align-self: stretch;
+        }
+
+        .analysis-col--left {
+          flex: 0 0 280px;
+        }
+
+        .analysis-col--center {
+          flex: 1 1 auto;
+        }
+
+        .analysis-col--right {
+          flex: 0 0 320px;
+        }
+
+        @media (max-width: 767px) {
           #analysis-columns {
             flex-direction: column !important;
+            align-items: stretch !important;
+          }
+
+          .analysis-col--left,
+          .analysis-col--center,
+          .analysis-col--right {
+            flex: 1 1 100% !important;
+            width: 100% !important;
           }
         }
       `}</style>
