@@ -4,8 +4,8 @@
   "models": {
     "densenet121-chest": {
       "version": "2",
-      "url": "https://huggingface.co/clarityray/densenet121-chest/resolve/main/model.onnx",
-      "spec_url": "https://huggingface.co/clarityray/densenet121-chest/resolve/main/clarity.json"
+      "url": "/models/densenet121-chest/model.onnx",
+      "spec_url": "/models/densenet121-chest/clarity.json"
     }
   }
 }

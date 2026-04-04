@@ -8,10 +8,10 @@ const variantStyles: Record<ButtonVariant, string> = {
   primary:
     'bg-[var(--g)] text-white border border-transparent hover:bg-[var(--gd)] focus-visible:ring-[var(--g)]',
   ghost:
-    'bg-transparent text-[var(--ink)] border border-[var(--border)] hover:bg-[var(--off)] focus-visible:ring-[var(--gm)]',
-  dark: 'bg-[var(--ink)] text-white border border-transparent hover:bg-[#1a1a1a] focus-visible:ring-[#1a1a1a]',
+    'bg-transparent text-[var(--ink2)] border border-[var(--border)] hover:bg-white/5 hover:text-[var(--ink)] focus-visible:ring-[var(--gm)]',
+  dark: 'bg-zinc-900 text-white border border-[var(--border)] hover:bg-zinc-800 focus-visible:ring-[var(--g)]',
   outline:
-    'bg-white text-[var(--ink)] border border-[var(--border)] hover:bg-[var(--off)] focus-visible:ring-[var(--gm)]'
+    'bg-black/30 text-[var(--ink)] border border-[var(--border)] hover:bg-white/5 focus-visible:ring-[var(--gm)]'
 };
 
 const sizeStyles: Record<ButtonSize, string> = {

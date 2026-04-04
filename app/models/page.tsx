@@ -1,266 +1,406 @@
 'use client';
 
-import Link from 'next/link';
-import { Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { PageContainer } from '@/components/ui/layout';
+import TopBar from '@/components/nav/TopBar';
+import ModelCard, { type ModelCardData } from '@/components/models/ModelCard';
 
-interface ModelVersion {
+/* ─── Raw API types ─────────────────────────────────────────────────────── */
+
+interface RawVersion {
   version: string;
-  file_size_mb: number;
+  file_size_mb?: number;
 }
 
-interface ModelItem {
+interface RawModelItem {
   slug: string;
   name: string;
   bodypart: string;
   modality: string;
   status: string;
-  current_version: ModelVersion | null;
+  current_version?: RawVersion | null;
+  certified?: boolean;
+  output_classes?: string[];
+  safety_tier?: string;
 }
 
-interface ModelsResponse {
-  items: ModelItem[];
+/* ─── Guards ────────────────────────────────────────────────────────────── */
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function toLabel(value: string): string {
-  if (!value) {
-    return 'Unknown';
+function parseItems(payload: unknown): ModelCardData[] {
+  if (!isRecord(payload) || !Array.isArray(payload['items'])) {
+    throw new Error('Invalid /api/models response shape.');
   }
 
-  return value
-    .split(/[-_\s]+/)
-    .filter((part) => part.length > 0)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ');
-}
+  return (payload['items'] as unknown[]).flatMap((raw) => {
+    if (!isRecord(raw)) return [];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+    const slug = typeof raw['slug'] === 'string' ? raw['slug'] : null;
+    const name = typeof raw['name'] === 'string' ? raw['name'] : null;
+    if (!slug || !name) return [];
 
-function parseModelsResponse(payload: unknown): ModelsResponse {
-  if (!isRecord(payload) || !Array.isArray(payload.items)) {
-    throw new Error('Invalid models response payload.');
-  }
+    const status = typeof raw['status'] === 'string' ? raw['status'] : '';
+    if (status.toLowerCase() !== 'published') return [];
 
-  const items: ModelItem[] = payload.items.flatMap((item) => {
-    if (!isRecord(item)) {
-      return [];
+    const bodypart  = typeof raw['bodypart']  === 'string' ? raw['bodypart']  : '';
+    const modality  = typeof raw['modality']  === 'string' ? raw['modality']  : '';
+    const certified = typeof raw['certified'] === 'boolean' ? raw['certified'] : false;
+    const safetyTier = typeof raw['safety_tier'] === 'string' ? raw['safety_tier'] : 'screening';
+
+    const outputClasses: string[] = Array.isArray(raw['output_classes'])
+      ? (raw['output_classes'] as unknown[]).filter((c): c is string => typeof c === 'string')
+      : [];
+
+    let version: string | undefined;
+    let fileSizeMb: number | undefined;
+    const cv = raw['current_version'];
+    if (isRecord(cv)) {
+      if (typeof cv['version'] === 'string') version = cv['version'];
+      if (typeof cv['file_size_mb'] === 'number') fileSizeMb = cv['file_size_mb'];
     }
 
-    const slug = typeof item.slug === 'string' ? item.slug : null;
-    const name = typeof item.name === 'string' ? item.name : null;
-    const bodypart = typeof item.bodypart === 'string' ? item.bodypart : '';
-    const modality = typeof item.modality === 'string' ? item.modality : '';
-    const status = typeof item.status === 'string' ? item.status : '';
-
-    if (!slug || !name) {
-      return [];
-    }
-
-    let currentVersion: ModelVersion | null = null;
-    if (isRecord(item.current_version)) {
-      const version = typeof item.current_version.version === 'string' ? item.current_version.version : null;
-      const fileSize =
-        typeof item.current_version.file_size_mb === 'number' ? item.current_version.file_size_mb : null;
-
-      if (version && fileSize !== null) {
-        currentVersion = {
-          version,
-          file_size_mb: fileSize
-        };
-      }
-    }
-
-    return [
-      {
-        slug,
-        name,
-        bodypart,
-        modality,
-        status,
-        current_version: currentVersion
-      }
-    ];
+    return [{ slug, name, bodypart, modality, version, fileSizeMb, outputClasses, certified, safetyTier }];
   });
-
-  return { items };
 }
+
+/* ─── Skeleton card ─────────────────────────────────────────────────────── */
+
+function SkeletonCard() {
+  return <div className="skeleton-card panel" aria-hidden="true" />;
+}
+
+/* ─── Filter dropdown ───────────────────────────────────────────────────── */
+
+interface FilterSelectProps {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder: string;
+}
+
+function FilterSelect({ id, value, onChange, options, placeholder }: FilterSelectProps) {
+  return (
+    <div className="filter-select-wrap">
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="filter-select"
+        aria-label={placeholder}
+      >
+        <option value="all">{placeholder}</option>
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt.replace(/[-_]/g, ' ')}
+          </option>
+        ))}
+      </select>
+      <ChevronIcon />
+    </div>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg
+      className="filter-select-chevron"
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/* ─── Page ──────────────────────────────────────────────────────────────── */
 
 export default function ModelsPage() {
-  const [models, setModels] = useState<ModelItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
+  const [models, setModels]             = useState<ModelCardData[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState<string | null>(null);
   const [bodypartFilter, setBodypartFilter] = useState('all');
   const [modalityFilter, setModalityFilter] = useState('all');
 
-  useEffect(() => {
-    const loadModels = async () => {
-      setLoading(true);
-      setError(null);
+  const loadModels = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/models', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const payload: unknown = await res.json();
+      setModels(parseItems(payload));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to fetch models.');
+      setModels([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      try {
-        const response = await fetch('/api/models', { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error(`Failed to load models (${response.status})`);
-        }
+  useEffect(() => { void loadModels(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-        const payload: unknown = await response.json();
-        const parsed = parseModelsResponse(payload);
-        const publishedOnly = parsed.items.filter((model) => model.status.toLowerCase() === 'published');
-        setModels(publishedOnly);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unable to fetch models.';
-        setError(message);
-        setModels([]);
-      } finally {
-        setLoading(false);
-      }
-    };
+  /* Filter options derived from loaded models */
+  const bodypartOptions = useMemo(
+    () => Array.from(new Set(models.map((m) => m.bodypart).filter(Boolean))).sort(),
+    [models],
+  );
+  const modalityOptions = useMemo(
+    () => Array.from(new Set(models.map((m) => m.modality).filter(Boolean))).sort(),
+    [models],
+  );
 
-    void loadModels();
-  }, []);
-
-  const bodypartOptions = useMemo(() => {
-    return Array.from(new Set(models.map((model) => model.bodypart).filter((value) => value.length > 0))).sort();
-  }, [models]);
-
-  const modalityOptions = useMemo(() => {
-    return Array.from(new Set(models.map((model) => model.modality).filter((value) => value.length > 0))).sort();
-  }, [models]);
-
-  const filteredModels = useMemo(() => {
-    const queryValue = query.trim().toLowerCase();
-
-    return models.filter((model) => {
-      if (bodypartFilter !== 'all' && model.bodypart !== bodypartFilter) {
-        return false;
-      }
-
-      if (modalityFilter !== 'all' && model.modality !== modalityFilter) {
-        return false;
-      }
-
-      if (!queryValue) {
-        return true;
-      }
-
-      return model.name.toLowerCase().includes(queryValue) || model.slug.toLowerCase().includes(queryValue);
+  const filtered = useMemo(() => {
+    return models.filter((m) => {
+      if (bodypartFilter !== 'all' && m.bodypart !== bodypartFilter) return false;
+      if (modalityFilter !== 'all' && m.modality !== modalityFilter) return false;
+      return true;
     });
-  }, [bodypartFilter, modalityFilter, models, query]);
+  }, [models, bodypartFilter, modalityFilter]);
+
+  const hasActiveFilters = bodypartFilter !== 'all' || modalityFilter !== 'all';
 
   return (
-    <main className="min-h-screen bg-[var(--off)] py-10">
-      <PageContainer>
-        <header className="mb-6">
-          <h1 className="text-3xl font-light tracking-[-0.8px] text-[var(--ink)]">Model Library</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">Browse published screening models and select one for analysis.</p>
-        </header>
+    <>
+      <TopBar />
 
-        <Card className="mb-5 p-4">
-          <div className="grid gap-3 md:grid-cols-[1fr_200px_200px]">
-            <div className="relative">
-              <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search model name or slug"
-                className="h-10 w-full rounded-lg border border-[var(--border)] bg-white pl-9 pr-3 text-sm text-[var(--ink)] outline-none focus:ring-2 focus:ring-[var(--gm)]"
-              />
+      <main className="models-page">
+        <div className="models-shell">
+          {/* Page header */}
+          <header className="models-header">
+            <div>
+              <p className="models-header__eyebrow mono">MODEL LIBRARY</p>
+              <h1 className="models-header__title">Published verified models</h1>
             </div>
+            <div className="status-dot" aria-hidden="true" />
+          </header>
 
-            <select
+          {/* Filter row */}
+          <div className="models-filters" role="search" aria-label="Filter models">
+            <FilterSelect
+              id="bodypart-filter"
               value={bodypartFilter}
-              onChange={(event) => setBodypartFilter(event.target.value)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--ink)] outline-none focus:ring-2 focus:ring-[var(--gm)]"
-            >
-              <option value="all">All body parts</option>
-              {bodypartOptions.map((bodypart) => (
-                <option key={bodypart} value={bodypart}>
-                  {toLabel(bodypart)}
-                </option>
-              ))}
-            </select>
-
-            <select
+              onChange={setBodypartFilter}
+              options={bodypartOptions}
+              placeholder="All body parts"
+            />
+            <FilterSelect
+              id="modality-filter"
               value={modalityFilter}
-              onChange={(event) => setModalityFilter(event.target.value)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm text-[var(--ink)] outline-none focus:ring-2 focus:ring-[var(--gm)]"
-            >
-              <option value="all">All modalities</option>
-              {modalityOptions.map((modality) => (
-                <option key={modality} value={modality}>
-                  {toLabel(modality)}
-                </option>
-              ))}
-            </select>
+              onChange={setModalityFilter}
+              options={modalityOptions}
+              placeholder="All modalities"
+            />
+            {hasActiveFilters && (
+              <button
+                className="models-filters__clear"
+                onClick={() => { setBodypartFilter('all'); setModalityFilter('all'); }}
+              >
+                Clear filters
+              </button>
+            )}
           </div>
-        </Card>
 
-        {loading ? (
-          <Card>
-            <p className="text-sm text-[var(--muted)]">Loading models...</p>
-          </Card>
-        ) : null}
-
-        {error ? (
-          <Card>
-            <p className="text-sm text-red-600">{error}</p>
-            <Button className="mt-3" onClick={() => window.location.reload()}>
-              Retry
-            </Button>
-          </Card>
-        ) : null}
-
-        {!loading && !error ? (
-          filteredModels.length === 0 ? (
-            <Card>
-              <p className="text-sm text-[var(--muted)]">No models matched your filters.</p>
-            </Card>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {filteredModels.map((model) => (
-                <Link key={model.slug} href={`/models/${model.slug}`}>
-                  <Card className="h-full cursor-pointer p-4 transition hover:shadow-[0_8px_30px_rgba(0,0,0,0.1)]">
-                    <p className="text-lg font-medium text-[var(--ink)]">{model.name}</p>
-
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="rounded-full bg-[var(--gl)] px-2.5 py-1 text-xs font-medium text-[var(--gd)]">
-                        {toLabel(model.bodypart)}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                        {toLabel(model.modality)}
-                      </span>
-                      <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                        Published
-                      </span>
-                    </div>
-
-                    <dl className="mt-4 grid gap-1 text-sm">
-                      <div className="flex items-center justify-between">
-                        <dt className="text-[var(--muted)]">Version</dt>
-                        <dd className="font-medium text-[var(--ink)]">
-                          {model.current_version?.version ?? '—'}
-                        </dd>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <dt className="text-[var(--muted)]">File size</dt>
-                        <dd className="font-medium text-[var(--ink)]">
-                          {model.current_version ? `${model.current_version.file_size_mb.toFixed(2)} MB` : '—'}
-                        </dd>
-                      </div>
-                    </dl>
-                  </Card>
-                </Link>
+          {/* Loading — 6 skeleton cards */}
+          {loading && (
+            <div className="models-grid" aria-busy="true" aria-label="Loading models">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <SkeletonCard key={i} />
               ))}
             </div>
-          )
-        ) : null}
-      </PageContainer>
-    </main>
+          )}
+
+          {/* Error */}
+          {!loading && error && (
+            <div className="models-state panel panel-accent">
+              <p className="models-state__title">Failed to load models</p>
+              <p className="models-state__body">{error}</p>
+              <button className="btn models-state__retry" onClick={() => void loadModels()}>
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Empty */}
+          {!loading && !error && filtered.length === 0 && (
+            <div className="models-state panel">
+              <p className="models-state__title">No published models match your filters</p>
+              {hasActiveFilters && (
+                <button
+                  className="models-state__clear-link"
+                  onClick={() => { setBodypartFilter('all'); setModalityFilter('all'); }}
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Model grid */}
+          {!loading && !error && filtered.length > 0 && (
+            <div className="models-grid" aria-label="Published models">
+              {filtered.map((model) => (
+                <ModelCard key={model.slug} model={model} />
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+
+      <style>{`
+        .models-page {
+          min-height: 100vh;
+          background: var(--bg-base);
+          padding-top: 80px;
+          padding-bottom: 64px;
+        }
+        .models-shell {
+          width: min(1120px, 100% - 2rem);
+          margin-inline: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+        }
+
+        /* Header */
+        .models-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding-bottom: 4px;
+          border-bottom: 1px solid var(--border-subtle);
+        }
+        .models-header__eyebrow {
+          font-size: 10px;
+          letter-spacing: 0.1em;
+          color: var(--accent-primary);
+          margin-bottom: 4px;
+        }
+        .models-header__title {
+          font-family: var(--font-ui);
+          font-size: 1.5rem;
+          font-weight: 400;
+          color: var(--text-primary);
+          letter-spacing: -0.02em;
+        }
+
+        /* Filters */
+        .models-filters {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .filter-select-wrap {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+        .filter-select {
+          appearance: none;
+          background: var(--bg-elevated);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-md);
+          padding: 6px 28px 6px 10px;
+          font-family: var(--font-mono);
+          font-size: 11px;
+          color: var(--text-secondary);
+          outline: none;
+          cursor: pointer;
+          transition: border-color var(--transition-base);
+        }
+        .filter-select:focus {
+          border-color: var(--border-accent);
+          color: var(--text-primary);
+        }
+        .filter-select:hover {
+          border-color: var(--border-default);
+        }
+        .filter-select-chevron {
+          position: absolute;
+          right: 8px;
+          pointer-events: none;
+          color: var(--text-tertiary);
+        }
+        .models-filters__clear {
+          background: none;
+          border: none;
+          font-family: var(--font-mono);
+          font-size: 11px;
+          color: var(--accent-primary);
+          cursor: pointer;
+          padding: 6px 4px;
+          opacity: 0.75;
+          transition: opacity var(--transition-fast);
+        }
+        .models-filters__clear:hover {
+          opacity: 1;
+        }
+
+        /* Grid */
+        .models-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 16px;
+        }
+        @media (max-width: 900px) {
+          .models-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 560px) {
+          .models-grid { grid-template-columns: 1fr; }
+        }
+
+        /* Skeleton card */
+        .skeleton-card {
+          height: 180px;
+          border-radius: var(--radius-lg);
+          background: var(--bg-elevated);
+          animation: skeleton-pulse 1.6s ease-in-out infinite;
+        }
+        @keyframes skeleton-pulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.45; }
+        }
+
+        /* State panels */
+        .models-state {
+          padding: 32px 24px;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .models-state__title {
+          font-family: var(--font-ui);
+          font-size: 0.9375rem;
+          font-weight: 500;
+          color: var(--text-primary);
+        }
+        .models-state__body {
+          font-family: var(--font-mono);
+          font-size: 12px;
+          color: var(--text-secondary);
+        }
+        .models-state__retry {
+          margin-top: 4px;
+        }
+        .models-state__clear-link {
+          background: none;
+          border: none;
+          font-family: var(--font-mono);
+          font-size: 12px;
+          color: var(--accent-primary);
+          cursor: pointer;
+          padding: 0;
+          opacity: 0.8;
+        }
+        .models-state__clear-link:hover { opacity: 1; }
+      `}</style>
+    </>
   );
 }

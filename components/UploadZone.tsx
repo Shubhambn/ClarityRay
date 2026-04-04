@@ -1,126 +1,304 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import type { AnalysisStatus } from '@/hooks/useClarityRay';
+import { useRef, useState, useCallback, useEffect } from 'react';
 
 interface UploadZoneProps {
-  onRun: (file: File) => Promise<void> | void;
-  onClear?: () => void;
-  status?: AnalysisStatus;
-  error?: string | null;
+  onFileSelected: (file: File) => void;
+  isDisabled: boolean;
+  currentFile: File | null;
 }
 
-export function UploadZone({ onRun, onClear, status = 'idle', error }: UploadZoneProps) {
-  const [fileName, setFileName] = useState<string>('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
-  const dropRef = useRef<HTMLDivElement | null>(null);
+const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function UploadZone({ onFileSelected, isDisabled, currentFile }: UploadZoneProps) {
+  const [isDragging, setIsDragging]         = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [thumbnailUrl, setThumbnailUrl]      = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const isBusy =
-    status === 'loading_manifest' ||
-    status === 'loading_spec' ||
-    status === 'downloading_model' ||
-    status === 'verifying_model' ||
-    status === 'processing';
-
-  const isReady = status === 'ready';
-
-  const handleFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const file = files[0];
-
-    if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type)) {
-      setLocalError('Unsupported file type. Please use PNG or JPEG.');
-      setSelectedFile(null);
-      setFileName('');
-      return;
+  // Revoke previous object URL to prevent memory leaks
+  useEffect(() => {
+    if (!currentFile) {
+      setThumbnailUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
     }
+  }, [currentFile]);
 
-    setLocalError(null);
-    setFileName(file.name);
-    setSelectedFile(file);
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      setThumbnailUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    };
+  }, []);
+
+  const processFile = useCallback(
+    (file: File) => {
+      if (!ACCEPTED_TYPES.includes(file.type)) {
+        setValidationError('Only PNG and JPEG files accepted');
+        return;
+      }
+      setValidationError(null);
+      // Revoke old URL before creating a new one
+      setThumbnailUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
+      onFileSelected(file);
+    },
+    [onFileSelected],
+  );
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+    // Reset so the same file can be re-selected
+    e.target.value = '';
   };
 
-  const onDrop = (evt: React.DragEvent<HTMLDivElement>) => {
-    evt.preventDefault();
-    evt.stopPropagation();
-    if (isBusy) return;
-    handleFiles(evt.dataTransfer.files);
-    dropRef.current?.classList.remove('border-accent');
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDisabled) setIsDragging(true);
   };
 
-  const onDragOver = (evt: React.DragEvent<HTMLDivElement>) => {
-    evt.preventDefault();
-    evt.stopPropagation();
-    dropRef.current?.classList.add('border-accent');
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only clear drag state if leaving the zone entirely (not entering a child)
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false);
+    }
   };
 
-  const onDragLeave = (evt: React.DragEvent<HTMLDivElement>) => {
-    evt.preventDefault();
-    evt.stopPropagation();
-    dropRef.current?.classList.remove('border-accent');
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (isDisabled) return;
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
   };
+
+  const handleClick = () => {
+    if (!isDisabled) inputRef.current?.click();
+  };
+
+  const handleChangeFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    inputRef.current?.click();
+  };
+
+  /* ── Derived styles ── */
+  const borderColor = isDragging
+    ? 'var(--border-accent-strong, var(--accent-primary))'
+    : 'var(--border-accent)';
+  const bg = isDragging
+    ? 'var(--accent-primary-glow, rgba(34,197,94,0.06))'
+    : 'transparent';
 
   return (
-    <div className="card space-y-4">
-      <div
-        ref={dropRef}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-white/5 px-6 py-10 text-center hover:border-white/40"
-        onClick={() => inputRef.current?.click()}
-      >
-        <p className="text-lg font-semibold text-white">Drop a chest X-ray here</p>
-        <p className="text-sm text-slate-400">or click to choose a file</p>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/jpg"
-          className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
-          disabled={isBusy}
-        />
-        {fileName && <p className="text-xs text-slate-300">Selected: {fileName}</p>}
-      </div>
+    <div
+      role="button"
+      tabIndex={isDisabled ? -1 : 0}
+      aria-disabled={isDisabled}
+      aria-label={currentFile ? `Selected file: ${currentFile.name}. Click to change.` : 'Upload X-ray image'}
+      onClick={handleClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') handleClick();
+      }}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '12px',
+        padding: '32px 24px',
+        borderRadius: '12px',
+        border: `1.5px dashed ${borderColor}`,
+        background: bg,
+        opacity: isDisabled ? 0.4 : 1,
+        cursor: isDisabled ? 'not-allowed' : currentFile ? 'default' : 'pointer',
+        pointerEvents: isDisabled ? 'none' : 'auto',
+        transition: 'all var(--transition-fast, 150ms ease)',
+        textAlign: 'center',
+        userSelect: 'none',
+        minHeight: '160px',
+      }}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/jpg"
+        style={{ display: 'none' }}
+        onChange={handleInputChange}
+        disabled={isDisabled}
+        tabIndex={-1}
+      />
 
-      <div className="flex flex-wrap gap-2">
-        <button className="btn" onClick={() => inputRef.current?.click()} disabled={isBusy}>
-          Choose File
-        </button>
-        <button
-          className="btn bg-emerald-600"
-          onClick={() => selectedFile && onRun(selectedFile)}
-          disabled={isBusy || !selectedFile || !isReady}
-        >
-          Run Analysis
-        </button>
-        <button
-          className="btn bg-slate-700"
-          onClick={() => {
-            setSelectedFile(null);
-            setFileName('');
-            setLocalError(null);
-            if (inputRef.current) {
-              inputRef.current.value = '';
-            }
-            onClear?.();
+      {isDragging ? (
+        /* ── DRAG OVER STATE ── */
+        <>
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--accent-primary)"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          <span
+            style={{
+              fontFamily: 'var(--font-ui)',
+              fontSize: '15px',
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+            }}
+          >
+            Release to upload
+          </span>
+        </>
+      ) : currentFile ? (
+        /* ── FILE SELECTED STATE ── */
+        <>
+          {thumbnailUrl && (
+            <img
+              src={thumbnailUrl}
+              alt="X-ray thumbnail"
+              style={{
+                width: '80px',
+                height: '80px',
+                objectFit: 'cover',
+                borderRadius: '6px',
+                border: '1px solid var(--border-accent)',
+              }}
+            />
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <span
+              style={{
+                fontFamily: 'var(--font-ui)',
+                fontSize: '13px',
+                color: 'var(--text-primary)',
+                fontWeight: 500,
+                wordBreak: 'break-all',
+                maxWidth: '220px',
+              }}
+            >
+              {currentFile.name}
+            </span>
+            <span
+              className="mono"
+              style={{ fontSize: '11px', color: 'var(--text-secondary)' }}
+            >
+              {formatBytes(currentFile.size)}
+            </span>
+          </div>
+
+          <button
+            onClick={handleChangeFile}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              fontFamily: 'var(--font-ui)',
+              fontSize: '12px',
+              color: 'var(--text-accent, var(--accent-primary))',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+            }}
+          >
+            Change file
+          </button>
+        </>
+      ) : (
+        /* ── DEFAULT STATE ── */
+        <>
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--text-accent, var(--accent-primary))"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span
+              style={{
+                fontFamily: 'var(--font-ui)',
+                fontSize: '15px',
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+              }}
+            >
+              Drop X-ray here
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-ui)',
+                fontSize: '13px',
+                color: 'var(--text-tertiary, var(--text-secondary))',
+              }}
+            >
+              or click to browse
+            </span>
+          </div>
+
+          <span
+            className="mono"
+            style={{
+              fontSize: '11px',
+              color: 'var(--text-tertiary, var(--text-secondary))',
+            }}
+          >
+            PNG or JPEG only
+          </span>
+        </>
+      )}
+
+      {/* Inline validation error */}
+      {validationError && (
+        <span
+          role="alert"
+          style={{
+            fontFamily: 'var(--font-ui)',
+            fontSize: '12px',
+            color: 'var(--color-error, #f87171)',
+            marginTop: '4px',
           }}
-          disabled={isBusy || !selectedFile}
         >
-          Clear
-        </button>
-      </div>
-
-      <p className="text-xs text-emerald-300">Processing happens locally in your browser.</p>
-      {status === 'loading_manifest' && <p className="text-xs text-slate-300">Loading model manifest...</p>}
-      {status === 'loading_spec' && <p className="text-xs text-slate-300">Loading model specification...</p>}
-      {status === 'downloading_model' && <p className="text-xs text-slate-300">Downloading model...</p>}
-      {status === 'verifying_model' && <p className="text-xs text-slate-300">Verifying model integrity...</p>}
-      {status === 'ready' && <p className="text-xs text-emerald-300">Model ready.</p>}
-      {status === 'processing' && <p className="text-xs text-slate-300">Analyzing image...</p>}
-      {(localError || error) && <p className="text-xs text-red-300">{localError ?? error}</p>}
+          {validationError}
+        </span>
+      )}
     </div>
   );
 }
