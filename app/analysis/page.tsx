@@ -8,7 +8,7 @@ import { usePersona } from '@/lib/persona/context';
 import { ConsentModal } from '@/components/ConsentModal';
 import { ControlPanel } from '@/components/analysis/ControlPanel';
 import { ScanViewer } from '@/components/analysis/ScanViewer';
-import { SystemPanel } from '@/components/analysis/SystemPanel';
+import SystemPanel from '@/components/analysis/SystemPanel';
 import { LogPanel } from '@/components/analysis/LogPanel';
 import type { HeatmapData } from '@/lib/clarity/postprocess';
 
@@ -204,6 +204,10 @@ export default function AnalysisPage() {
           <SystemPanel
             status={status}
             result={result}
+            modelInfo={modelInfo}
+            error={error}
+            logs={logs}
+            onReset={reset}
           />
         </div>
 

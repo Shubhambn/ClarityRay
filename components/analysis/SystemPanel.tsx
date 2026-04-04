@@ -1,220 +1,544 @@
 'use client';
 
-import type { ClarityRayStatus } from '@/hooks/useClarityRay';
 import type { SafeResult } from '@/lib/clarity/postprocess';
-import { usePersona } from '@/lib/persona/context';
+import type { ClarityRayStatus } from '@/hooks/useClarityRay';
+import { usePersona, type Persona } from '@/lib/persona/context';
+
+const DEFAULT_THRESHOLD_POSSIBLE = 0.5;
+const DEFAULT_THRESHOLD_LOW_CONF = 0.25;
+
+interface SystemLog {
+  id: string;
+  timestamp: Date;
+  level: 'info' | 'warn' | 'error' | 'success';
+  message: string;
+}
+
+interface ModelInfo {
+  id: string;
+  name: string;
+  version: string;
+  inputShape: number[];
+  outputClasses: string[];
+  bodypart: string;
+  modality: string;
+  thresholds?: {
+    possible_finding?: number;
+    low_confidence?: number;
+    validation_status?: string;
+  };
+}
 
 interface SystemPanelProps {
   status: ClarityRayStatus;
   result: SafeResult | null;
+  modelInfo: ModelInfo | null;
+  error: string | null;
+  logs: SystemLog[];
+  onReset: () => void;
 }
 
-function SafetyBadge({ tier }: { tier: SafeResult['safetyTier'] }) {
-  const styles: Record<string, React.CSSProperties> = {
-    possible_finding: {
-      background: 'rgba(239,68,68,0.12)',
-      border: '1px solid rgba(239,68,68,0.4)',
-      color: '#fca5a5',
-    },
-    low_confidence: {
-      background: 'rgba(250,204,21,0.1)',
-      border: '1px solid rgba(250,204,21,0.35)',
-      color: '#fef08a',
-    },
-    no_finding: {
-      background: 'rgba(34,197,94,0.1)',
-      border: '1px solid rgba(34,197,94,0.3)',
-      color: '#86efac',
-    },
-  };
-
-  const labels: Record<string, string> = {
-    possible_finding: 'POSSIBLE FINDING',
-    low_confidence: 'LOW CONFIDENCE',
-    no_finding: 'NO FINDING',
-  };
-
-  return (
-    <span
-      className="mono"
-      style={{
-        ...styles[tier],
-        padding: '3px 10px',
-        borderRadius: '4px',
-        fontSize: '10px',
-        letterSpacing: '0.1em',
-        display: 'inline-block',
-      }}
-    >
-      {labels[tier]}
-    </span>
-  );
+/**
+ * SafeResult does not store per-class probabilities. For the binary screening
+ * pipeline, values are reconstructed from confidencePercent + safetyTier to
+ * match translateResults() in postprocess.ts.
+ */
+function perClassProbabilities(result: SafeResult, classCount: number): number[] {
+  if (classCount === 0) {
+    return [];
+  }
+  if (classCount === 2) {
+    const p = result.confidencePercent / 100;
+    if (result.safetyTier === 'no_finding') {
+      return [p, 1 - p];
+    }
+    return [1 - p, p];
+  }
+  return Array.from({ length: classCount }, () => 1 / classCount);
 }
 
-function ConfidenceBar({ percent, tier }: { percent: number; tier: SafeResult['safetyTier'] }) {
-  const barColor = tier === 'possible_finding'
-    ? '#ef4444'
-    : tier === 'low_confidence'
-    ? '#facc15'
-    : 'var(--accent-primary)';
+function PersonaBadge({ persona }: { persona: Persona }) {
+  if (persona === 'researcher') {
+    return <span className="badge badge-blue">RESEARCHER</span>;
+  }
+  if (persona === 'doctor') {
+    return <span className="badge badge-green">DOCTOR</span>;
+  }
+  if (persona === 'patient') {
+    return <span className="badge badge-muted">PATIENT</span>;
+  }
+  return <span className="badge badge-amber">NO PERSONA</span>;
+}
 
+function loadingMessage(status: ClarityRayStatus): string {
+  switch (status) {
+    case 'loading_manifest':
+      return 'Connecting to model registry...';
+    case 'loading_spec':
+      return 'Reading model specification...';
+    case 'downloading_model':
+      return 'Downloading model weights...';
+    case 'verifying_model':
+      return 'Verifying model integrity...';
+    default:
+      return '';
+  }
+}
+
+function ProbabilityBars({
+  result,
+  modelInfo,
+}: {
+  result: SafeResult;
+  modelInfo: ModelInfo;
+}) {
+  const probs = perClassProbabilities(result, modelInfo.outputClasses.length);
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-        <p className="mono" style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          Confidence
-        </p>
-        <p className="mono" style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-          {percent}%
-        </p>
+      <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+        OUTPUT PROBABILITIES
       </div>
-      <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
-        <div style={{
-          height: '100%',
-          width: `${percent}%`,
-          background: barColor,
-          borderRadius: '2px',
-          transition: 'width 0.4s ease',
-        }} />
-      </div>
+      {modelInfo.outputClasses.map((cls, i) => {
+        const prob = probs[i] ?? 0;
+        return (
+          <div key={cls} style={{ marginBottom: 'var(--space-2)' }}>
+            <div className="row-between">
+              <span className="mono">{cls}</span>
+              <span className="mono">{Math.round(prob * 100)}%</span>
+            </div>
+            <div className="prob-bar-track">
+              <div className="prob-bar-fill" style={{ width: `${prob * 100}%` }} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-export function SystemPanel({ status, result }: SystemPanelProps) {
+export default function SystemPanel(props: SystemPanelProps) {
+  const { status, result, modelInfo, error, logs, onReset } = props;
+  void logs;
+
   const { persona } = usePersona();
 
-  const isProcessing = status === 'processing';
-  const isIdle = !result && !isProcessing && status !== 'error';
+  const possibleThreshold =
+    modelInfo?.thresholds?.possible_finding ?? DEFAULT_THRESHOLD_POSSIBLE;
+  const lowConfThreshold =
+    modelInfo?.thresholds?.low_confidence ?? DEFAULT_THRESHOLD_LOW_CONF;
+
+  const STATUS_TEXT: Record<ClarityRayStatus, string> = {
+    idle: 'Awaiting scan',
+    loading_manifest: 'Initializing...',
+    loading_spec: 'Loading specification...',
+    downloading_model: 'Downloading model...',
+    verifying_model: 'Verifying integrity...',
+    ready: 'System ready',
+    processing: 'Analyzing...',
+    complete: 'Analysis complete',
+    error: 'System error',
+  };
+
+  const LOADING_STATUSES = new Set<ClarityRayStatus>([
+    'loading_manifest',
+    'loading_spec',
+    'downloading_model',
+    'verifying_model',
+  ]);
 
   return (
     <div
       className="panel"
       style={{
-        width: '320px',
-        flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
-        gap: '16px',
-        padding: '16px',
+        gap: 'var(--space-4)',
+        height: '100%',
         overflowY: 'auto',
       }}
     >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <p className="mono" style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)' }}>
-          ANALYSIS
-        </p>
-        <span className="mono" style={{ fontSize: '9px', color: 'var(--text-secondary)', opacity: 0.6 }}>
-          SCREENING ONLY
-        </span>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span className="label">ANALYSIS OUTPUT</span>
+        <PersonaBadge persona={persona} />
       </div>
 
-      {/* Processing state */}
-      {isProcessing && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{
-            width: '14px', height: '14px',
-            border: '2px solid rgba(34,197,94,0.15)',
-            borderTop: '2px solid var(--accent-primary)',
-            borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite',
-            flexShrink: 0,
-          }} />
-          <p className="mono" style={{ fontSize: '12px', color: 'var(--text-primary)' }}>Running inference...</p>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-2)',
+          padding: 'var(--space-3)',
+          background: 'var(--bg-elevated)',
+          borderRadius: 'var(--radius-md)',
+          border: '1px solid var(--border-default)',
+        }}
+      >
+        <div className="row-between">
+          <span className="label">STATUS</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            {LOADING_STATUSES.has(status) && <div className="spinner" />}
+            <span className="mono">{STATUS_TEXT[status]}</span>
+          </div>
+        </div>
+
+        <div className="row-between">
+          <span className="label">MODEL</span>
+          <span className="mono">{modelInfo?.name ?? '—'}</span>
+        </div>
+      </div>
+
+      {status !== 'complete' && status !== 'error' && (
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 'var(--space-3)',
+          }}
+        >
+          {status === 'ready' && (
+            <>
+              <svg
+                width={20}
+                height={20}
+                viewBox="0 0 20 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden
+              >
+                <path
+                  d="M16.667 5L7.5 14.167 3.333 10"
+                  stroke="var(--accent-primary)"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="mono" style={{ color: 'var(--text-accent)' }}>
+                Upload an image to begin
+              </span>
+            </>
+          )}
+
+          {LOADING_STATUSES.has(status) && (
+            <>
+              <div className="spinner spinner-lg" />
+              <span className="mono" style={{ color: 'var(--text-secondary)' }}>
+                {loadingMessage(status)}
+              </span>
+            </>
+          )}
+
+          {status === 'idle' && (
+            <span className="mono" style={{ color: 'var(--text-tertiary)' }}>
+              Awaiting initialization
+            </span>
+          )}
+
+          {status === 'processing' && (
+            <>
+              <div className="spinner spinner-lg" />
+              <span className="mono">Running inference...</span>
+            </>
+          )}
         </div>
       )}
 
-      {/* Idle state */}
-      {isIdle && (
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', fontFamily: 'var(--font-ui)' }}>
-          Upload a scan and run analysis to see results.
-        </p>
-      )}
+      {status === 'complete' && result !== null && (() => {
+        let cardBg: string;
+        let cardBorder: string;
+        if (result.safetyTier === 'possible_finding') {
+          cardBg = 'rgba(239,68,68,0.08)';
+          cardBorder = 'rgba(239,68,68,0.25)';
+        } else if (result.safetyTier === 'low_confidence') {
+          cardBg = 'rgba(245,158,11,0.08)';
+          cardBorder = 'rgba(245,158,11,0.25)';
+        } else {
+          cardBg = 'var(--accent-primary-glow)';
+          cardBorder = 'var(--border-accent)';
+        }
 
-      {/* Results */}
-      {result && (
-        <>
-          {/* Safety badge */}
-          <div>
-            <SafetyBadge tier={result.safetyTier} />
-          </div>
+        let doctorDisclaimerBorderLeft: string;
+        if (result.safetyTier === 'possible_finding') {
+          doctorDisclaimerBorderLeft = '3px solid var(--status-danger)';
+        } else if (result.safetyTier === 'low_confidence') {
+          doctorDisclaimerBorderLeft = '3px solid var(--status-warning)';
+        } else {
+          doctorDisclaimerBorderLeft = '3px solid var(--status-normal)';
+        }
 
-          {/* Primary finding */}
-          <div>
-            <p className="mono" style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              PRIMARY FINDING
-            </p>
-            <p style={{
-              fontSize: '22px',
-              fontWeight: 600,
-              color: 'var(--text-primary)',
-              fontFamily: 'var(--font-ui)',
-              lineHeight: 1.2,
-            }}>
-              {result.primaryFinding}
-            </p>
-          </div>
-
-          {/* Confidence bar — hidden from patient persona? No, confidence % is ok for patient too since it's framed safely */}
-          <ConfidenceBar percent={result.confidencePercent} tier={result.safetyTier} />
-
-          {/* Plain summary — always visible */}
-          <div style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: '6px',
-            padding: '12px',
-          }}>
-            <p className="mono" style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-              {persona === 'doctor' ? 'CLINICAL INTERPRETATION' : persona === 'researcher' ? 'RESULT SUMMARY' : 'WHAT THIS MEANS'}
-            </p>
-            <p style={{ fontSize: '13px', color: 'var(--text-primary)', fontFamily: 'var(--font-ui)', lineHeight: 1.6 }}>
-              {result.plainSummary}
-            </p>
-          </div>
-
-          {/* Researcher: raw probability % */}
-          {(persona === 'researcher' || persona === 'doctor') && (
-            <div style={{ border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '10px 12px' }}>
-              <p className="mono" style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                RAW CONFIDENCE
-              </p>
-              <p className="mono" style={{ fontSize: '16px', color: 'var(--text-mono)' }}>
-                {result.confidencePercent}%
-              </p>
-              <p className="mono" style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                Safety tier: {result.safetyTier.replace('_', ' ')}
-              </p>
+        return (
+          <>
+            <div
+              style={{
+                background: cardBg,
+                border: `1px solid ${cardBorder}`,
+                borderRadius: 'var(--radius-lg)',
+                padding: 'var(--space-4)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: '18px',
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                    margin: 0,
+                  }}
+                >
+                  {result.safetyTier === 'possible_finding' && '⚠ Possible Finding'}
+                  {result.safetyTier === 'low_confidence' && '○ Low Confidence'}
+                  {result.safetyTier === 'no_finding' && '✓ No Finding'}
+                </p>
+                {result.safetyTier === 'possible_finding' && (
+                  <span className="badge badge-red">POSSIBLE</span>
+                )}
+                {result.safetyTier === 'low_confidence' && (
+                  <span className="badge badge-amber">LOW CONF</span>
+                )}
+                {result.safetyTier === 'no_finding' && (
+                  <span className="badge badge-green">NORMAL</span>
+                )}
+              </div>
+              <span className="mono" style={{ marginTop: 'var(--space-1)', display: 'block' }}>
+                {result.confidencePercent}% confidence
+              </span>
             </div>
-          )}
 
-          {/* Disclaimer — always visible */}
-          <div style={{
-            background: 'rgba(234,179,8,0.06)',
-            border: '1px solid rgba(234,179,8,0.25)',
-            borderRadius: '6px',
-            padding: '10px 12px',
-          }}>
-            <p style={{ fontSize: '11px', color: '#fef08a', fontFamily: 'var(--font-ui)', lineHeight: 1.6, opacity: 0.9 }}>
-              {result.disclaimer}
-            </p>
-          </div>
-        </>
-      )}
+            {persona === 'researcher' && (
+              <>
+                {modelInfo !== null && <ProbabilityBars result={result} modelInfo={modelInfo} />}
 
-      {/* Static disclaimer when idle */}
-      {!result && (
-        <div style={{
-          background: 'rgba(234,179,8,0.05)',
-          border: '1px solid rgba(234,179,8,0.2)',
-          borderRadius: '6px',
-          padding: '10px 12px',
-        }}>
-          <p style={{ fontSize: '11px', color: '#fef08a', fontFamily: 'var(--font-ui)', lineHeight: 1.6, opacity: 0.8 }}>
-            This is a screening tool only. Not a diagnosis. Always consult a qualified physician.
+                <div>
+                  <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+                    THRESHOLDS
+                  </div>
+                  <div className="panel-sm">
+                    <div className="row-between">
+                      <span className="mono" style={{ color: 'var(--text-tertiary)' }}>
+                        possible_finding
+                      </span>
+                      <span className="mono">{possibleThreshold}</span>
+                    </div>
+                    <div className="row-between" style={{ marginTop: 'var(--space-2)' }}>
+                      <span className="mono" style={{ color: 'var(--text-tertiary)' }}>
+                        low_confidence
+                      </span>
+                      <span className="mono">{lowConfThreshold}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+                    METADATA
+                  </div>
+                  <div className="panel-sm">
+                    {(
+                      [
+                        ['Input', modelInfo?.inputShape?.join('×') ?? '—'],
+                        ['Activation', 'softmax'],
+                        ['Model ID', modelInfo?.id ?? '—'],
+                      ] as const
+                    ).map(([key, val]) => (
+                      <div key={key} className="row-between" style={{ marginBottom: 'var(--space-1)' }}>
+                        <span className="mono" style={{ color: 'var(--text-tertiary)' }}>
+                          {key}
+                        </span>
+                        <span className="mono">{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="label" style={{ marginBottom: 'var(--space-1)' }}>SUMMARY</div>
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    {result.plainSummary}
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    background: 'rgba(245,158,11,0.06)',
+                    border: '1px solid rgba(245,158,11,0.2)',
+                    borderLeft: '3px solid var(--status-warning)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: 'var(--space-3) var(--space-4)',
+                  }}
+                >
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    {result.disclaimer}
+                  </p>
+                </div>
+              </>
+            )}
+
+            {persona === 'doctor' && (
+              <>
+                <div>
+                  <p style={{ fontSize: '16px', fontWeight: 600 }}>{result.primaryFinding}</p>
+                  <span className="mono">Confidence: {result.confidencePercent}%</span>
+                </div>
+
+                {modelInfo !== null && <ProbabilityBars result={result} modelInfo={modelInfo} />}
+
+                <div>
+                  <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+                    INTERPRETATION
+                  </div>
+                  <div className="panel-sm">
+                    <p style={{ fontSize: '13px' }}>
+                      {result.safetyTier === 'possible_finding'
+                        ? 'High-probability pattern detected. Radiologist review recommended.'
+                        : result.safetyTier === 'low_confidence'
+                          ? 'Weak signal detected. Clinical correlation recommended.'
+                          : 'No significant abnormality pattern identified by the model.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="label" style={{ marginBottom: 'var(--space-1)' }}>
+                    CLINICAL SUMMARY
+                  </div>
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    {result.plainSummary}
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    background: 'rgba(245,158,11,0.06)',
+                    border: '1px solid rgba(245,158,11,0.2)',
+                    borderLeft: doctorDisclaimerBorderLeft,
+                    borderRadius: 'var(--radius-lg)',
+                    padding: 'var(--space-3) var(--space-4)',
+                  }}
+                >
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    {result.disclaimer}
+                  </p>
+                </div>
+              </>
+            )}
+
+            {(persona === 'patient' || persona === null) && (
+              <>
+                <div style={{ textAlign: 'center', padding: 'var(--space-4) 0' }}>
+                  <p style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    {result.safetyTier === 'possible_finding'
+                      ? 'Something may need medical attention'
+                      : result.safetyTier === 'low_confidence'
+                        ? 'The result was inconclusive'
+                        : 'Nothing concerning was detected'}
+                  </p>
+                  <p
+                    style={{
+                      fontSize: '13px',
+                      color: 'var(--text-secondary)',
+                      marginTop: 'var(--space-2)',
+                    }}
+                  >
+                    {result.safetyTier === 'possible_finding'
+                      ? 'The AI found a pattern that may be significant.'
+                      : result.safetyTier === 'low_confidence'
+                        ? 'The AI could not make a confident assessment.'
+                        : 'The AI did not find signs of concern.'}
+                  </p>
+                </div>
+
+                <div className="panel-sm">
+                  <p style={{ fontWeight: 500, fontSize: '13px', marginBottom: 'var(--space-2)' }}>
+                    What should I do?
+                  </p>
+                  <ul
+                    style={{
+                      fontSize: '13px',
+                      color: 'var(--text-secondary)',
+                      paddingLeft: 'var(--space-4)',
+                      lineHeight: 1.8,
+                    }}
+                  >
+                    <li>This is a screening tool, not a diagnosis.</li>
+                    <li>Always consult your physician about your health.</li>
+                    {result.safetyTier === 'possible_finding' && (
+                      <li>Consider contacting your doctor soon.</li>
+                    )}
+                  </ul>
+                </div>
+
+                <div
+                  style={{
+                    background: 'rgba(245,158,11,0.08)',
+                    border: '1px solid rgba(245,158,11,0.25)',
+                    borderRadius: 'var(--radius-lg)',
+                    padding: 'var(--space-3) var(--space-4)',
+                  }}
+                >
+                  <p style={{ fontSize: '13px', fontWeight: 600, color: '#fbbf24', margin: 0 }}>
+                    THIS IS NOT A DIAGNOSIS
+                  </p>
+                  <p
+                    style={{
+                      fontSize: '12px',
+                      color: 'var(--text-secondary)',
+                      marginTop: 'var(--space-1)',
+                      margin: 0,
+                    }}
+                  >
+                    Always consult a licensed physician for medical advice.
+                  </p>
+                </div>
+              </>
+            )}
+          </>
+        );
+      })()}
+
+      {status === 'error' && (
+        <div
+          style={{
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.25)',
+            borderRadius: 'var(--radius-lg)',
+            padding: 'var(--space-4)',
+          }}
+        >
+          <p
+            style={{
+              color: 'var(--status-danger)',
+              fontWeight: 500,
+              marginBottom: 'var(--space-2)',
+            }}
+          >
+            Analysis Error
           </p>
+          <p className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+            {error ?? 'An unknown error occurred'}
+          </p>
+          <button
+            type="button"
+            className="btn btn-danger"
+            style={{ marginTop: 'var(--space-3)' }}
+            onClick={onReset}
+          >
+            Retry
+          </button>
         </div>
       )}
     </div>
