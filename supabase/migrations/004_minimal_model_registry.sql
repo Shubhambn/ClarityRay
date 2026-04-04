@@ -1,3 +1,6 @@
+-- ClarityRay minimal model-registry schema (metadata only)
+-- Safe for Supabase SQL Editor
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS models (
@@ -20,3 +23,6 @@ CREATE TABLE IF NOT EXISTS model_versions (
   created_at  timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT model_versions_model_id_version_key UNIQUE (model_id, version)
 );
+
+CREATE INDEX IF NOT EXISTS idx_models_slug ON models(slug);
+CREATE INDEX IF NOT EXISTS idx_model_versions_model_id ON model_versions(model_id);
