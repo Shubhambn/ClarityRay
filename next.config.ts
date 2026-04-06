@@ -4,6 +4,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "huggingface.co" },
+      { protocol: "https", hostname: "*.huggingface.co" },
+    ],
+  },
   async headers() {
     return [
       {
@@ -20,6 +26,9 @@ const nextConfig: NextConfig = {
         ],
       },
     ];
+  },
+  async rewrites() {
+    return [];
   },
 };
 

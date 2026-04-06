@@ -1,13 +1,14 @@
-'use client';
+'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import * as ort from 'onnxruntime-web';
-import { postprocess, type SafeResult } from '@/lib/clarity/postprocess';
-import { validateSpec, type ClaritySpec } from '@/lib/clarity/types';
-import { preprocessImage } from '@/lib/clarity/preprocess';
-import { loadModel } from '@/lib/clarity/loader';
+import { useCallback, useEffect, useRef, useState } from 'react'
+import * as ort from 'onnxruntime-web'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { BackendError, fetchModelBySlug } from '@/lib/api/client'
+import { sha256 } from '@/lib/clarity/hash'
+import { postprocess, type SafeResult } from '@/lib/clarity/postprocess'
+import { preprocessImage } from '@/lib/clarity/preprocess'
+import { runInference, sessionCache as runtimeSessionCache } from '@/lib/clarity/run'
+import { type ClaritySpec, validateSpec } from '@/lib/clarity/types'
 
 export type ClarityRayStatus =
   | 'idle'
@@ -18,58 +19,114 @@ export type ClarityRayStatus =
   | 'ready'
   | 'processing'
   | 'complete'
-  | 'error';
-
-export interface SystemLog {
-  id: string;
-  timestamp: Date;
-  level: 'info' | 'warn' | 'error' | 'success';
-  message: string;
-}
+  | 'error'
 
 export interface ModelInfo {
-  id: string;
-  name: string;
-  version: string;
-  inputShape: number[];
-  outputClasses: string[];
-  bodypart: string;
-  modality: string;
+  id: string
+  name: string
+  version: string
+  inputShape: number[]
+  outputClasses: string[]
+  bodypart: string
+  modality: string
+  thresholds?: {
+    possible_finding?: number
+    low_confidence?: number
+    validation_status?: string
+  }
 }
 
-export interface UseClarityRayReturn {
-  status: ClarityRayStatus;
-  result: SafeResult | null;
-  error: string | null;
-  modelInfo: ModelInfo | null;
-  logs: SystemLog[];
-  runAnalysis: (file: File) => Promise<void>;
-  reset: () => void;
+export interface SystemLog {
+  id: string
+  timestamp: Date
+  level: 'info' | 'warn' | 'error' | 'success'
+  message: string
 }
 
-// ─── Module-level session cache ───────────────────────────────────────────────
-// Cached at module level so the InferenceSession survives re-renders.
+type HookErrorContext =
+  | 'network'
+  | 'timeout'
+  | 'onnx-load'
+  | 'preprocess'
+  | 'inference'
+  | 'cache'
+  | 'generic'
 
-const sessionCache = new Map<string, ort.InferenceSession>();
+const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
+const DEFAULT_MODEL_SLUG = 'densenet121-chest'
+const LOCAL_SPEC_FALLBACK_URL = '/models/densenet121-chest/clarity.json'
+const LOCAL_MODEL_FALLBACK_URL = '/models/densenet121-chest/model.onnx'
+const MODEL_CACHE_NAME = 'clarityray-models'
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Outside the component — persists across re-renders
+const sessionCache = new Map<string, ort.InferenceSession>()
 
-const DEFAULT_SLUG = 'chestxray-densenet121-onnx';
-const SELECTED_MODEL_KEY = 'clarityray_selected_model';
-
-function makeLog(
-  level: SystemLog['level'],
-  message: string,
-): SystemLog {
-  return {
-    id: crypto.randomUUID(),
-    timestamp: new Date(),
-    level,
-    message,
-  };
+function getSessionKey(spec: ClaritySpec): string {
+  return `${spec.id}@${spec.version}`
 }
 
-function modelInfoFromSpec(spec: ClaritySpec): ModelInfo {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+  return 'Unknown error'
+}
+
+function mapFriendlyError(context: HookErrorContext, error: unknown): string {
+  const message = toErrorMessage(error).toLowerCase()
+
+  if (context === 'timeout' || message.includes('timed out') || message.includes('aborterror')) {
+    return 'Download timed out. The model file may be too large or your connection is slow.'
+  }
+
+  if (
+    context === 'network' ||
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('cannot reach backend api')
+  ) {
+    return 'No internet connection. Check your connection and try again.'
+  }
+
+  if (context === 'cache' || message.includes('quotaexceedederror') || message.includes('storage')) {
+    return 'Storage is full. Clear your browser storage and try again.'
+  }
+
+  if (context === 'onnx-load') {
+    return 'Failed to load the AI model. The model file may be corrupted.'
+  }
+
+  if (context === 'preprocess') {
+    return 'Could not process the image. Make sure it is a valid PNG or JPEG.'
+  }
+
+  if (context === 'inference') {
+    return 'Analysis failed. This may be a temporary issue — try again.'
+  }
+
+  return toErrorMessage(error)
+}
+
+async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+    return await response.json()
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
+function toModelInfo(spec: ClaritySpec): ModelInfo {
   return {
     id: spec.id,
     name: spec.name,
@@ -78,363 +135,338 @@ function modelInfoFromSpec(spec: ClaritySpec): ModelInfo {
     outputClasses: spec.output.classes,
     bodypart: spec.bodypart,
     modality: spec.modality,
-  };
+    thresholds: {
+      possible_finding: spec.thresholds.possible_finding,
+      low_confidence: spec.thresholds.low_confidence,
+      validation_status: spec.thresholds.validation_status,
+    },
+  }
 }
 
-function plainError(err: unknown): string {
-  if (!(err instanceof Error)) {
-    return 'Unexpected error while running analysis.';
-  }
-
-  const msg = err.message;
-
-  if (/WebAssembly/i.test(msg)) {
-    return 'Your browser does not support local AI analysis. Please use a recent Chrome, Firefox, or Edge.';
-  }
-  if (/integrity check failed/i.test(msg)) {
-    return 'Model integrity check failed. The downloaded model may be corrupt. Please reload.';
-  }
-  if (/Failed to fetch model/i.test(msg)) {
-    return 'Model download failed. Please check your connection and try again.';
-  }
-  if (/Failed to fetch|NetworkError|network/i.test(msg)) {
-    return 'Network error. Please check your connection and retry.';
-  }
-  if (/Invalid image tensor shape/i.test(msg)) {
-    return 'The selected image format is not supported for analysis.';
-  }
-
-  return msg;
-}
-
-/**
- * Resolve the clarity.json URL and model .onnx URL for a given slug.
- *
- * Strategy (in order):
- * 1. Try GET /api/models/{slug} — used when a Next.js route handler exists.
- * 2. Fall back to reading local manifest at /models/manifest.json.
- * 3. If manifest fails, synthesise local paths directly from the slug.
- */
-async function resolveModelUrls(
-  slug: string,
-): Promise<{ specUrl: string; modelUrl: string }> {
-  // Attempt 1 — platform API route
-  try {
-    const apiRes = await fetch(`/api/models/${slug}`, { cache: 'no-cache' });
-    if (apiRes.ok) {
-      const json: unknown = await apiRes.json();
-      if (typeof json === 'object' && json !== null) {
-        const record = json as Record<string, unknown>;
-
-        // Flat format: { clarity_url, model_url }
-        if (typeof record.clarity_url === 'string') {
-          const specUrl = record.clarity_url;
-          const modelUrl =
-            typeof record.model_url === 'string'
-              ? record.model_url
-              : `/models/${slug}/model.onnx`;
-          return { specUrl, modelUrl };
-        }
-
-        // Legacy nested format: { current_version: { clarity_url, onnx_url } }
-        if (
-          typeof record.current_version === 'object' &&
-          record.current_version !== null
-        ) {
-          const cv = record.current_version as Record<string, unknown>;
-          if (typeof cv.clarity_url === 'string') {
-            const specUrl = cv.clarity_url;
-            const modelUrl =
-              typeof cv.onnx_url === 'string'
-                ? cv.onnx_url
-                : typeof cv.model_url === 'string'
-                  ? cv.model_url
-                  : `/models/${slug}/model.onnx`;
-            return { specUrl, modelUrl };
-          }
-        }
-      }
-    }
-  } catch {
-    // API route not present or backend unavailable — fall through to manifest
-  }
-
-  // Attempt 2 — static manifest
-  try {
-    const manifestRes = await fetch('/models/manifest.json', { cache: 'no-cache' });
-    if (manifestRes.ok) {
-      const manifest: unknown = await manifestRes.json();
-      if (
-        typeof manifest === 'object' &&
-        manifest !== null &&
-        'models' in manifest
-      ) {
-        const models = (manifest as Record<string, unknown>).models;
-        if (
-          typeof models === 'object' &&
-          models !== null &&
-          slug in models
-        ) {
-          const entry = (models as Record<string, unknown>)[slug];
-          if (
-            typeof entry === 'object' &&
-            entry !== null &&
-            'spec_url' in entry &&
-            'url' in entry
-          ) {
-            const e = entry as Record<string, unknown>;
-            if (typeof e.spec_url === 'string' && typeof e.url === 'string') {
-              return { specUrl: e.spec_url, modelUrl: e.url };
-            }
-          }
-        }
-      }
-    }
-  } catch {
-    // Manifest not readable — fall through to synthesised paths
-  }
-
-  // Attempt 3 — synthesise local paths
+function makeSystemLog(level: SystemLog['level'], message: string): SystemLog {
   return {
-    specUrl: `/models/${slug}/clarity.json`,
-    modelUrl: `/models/${slug}/model.onnx`,
-  };
+    id: crypto.randomUUID(),
+    timestamp: new Date(),
+    level,
+    message,
+  }
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+function tick(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0)
+  })
+}
 
-export function useClarityRay(): UseClarityRayReturn {
-  const [status, setStatus] = useState<ClarityRayStatus>('idle');
-  const [result, setResult] = useState<SafeResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
-  const [logs, setLogs] = useState<SystemLog[]>([]);
+export function useClarityRay() {
+  const [status, setStatus] = useState<ClarityRayStatus>('idle')
+  const [result, setResult] = useState<SafeResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null)
+  const [logs, setLogs] = useState<SystemLog[]>([])
 
-  // The active spec and session refs let runAnalysis access current values
-  // without needing them in its dependency array.
-  const specRef = useRef<ClaritySpec | null>(null);
-  const statusRef = useRef<ClarityRayStatus>('idle');
+  const statusRef = useRef<ClarityRayStatus>('idle')
+  const specRef = useRef<ClaritySpec | null>(null)
+  const modelUrlRef = useRef<string | null>(null)
+  const initializedRef = useRef(false)
 
-  // Keep statusRef in sync with status state.
   useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
+    statusRef.current = status
+  }, [status])
 
-  // ── addLog ────────────────────────────────────────────────────────────────
-  // Never throws. Appends to the immutable log array.
-  const addLog = useCallback((level: SystemLog['level'], message: string) => {
+  const addLog = useCallback((level: SystemLog['level'], message: string): void => {
     try {
-      setLogs((prev) => [...prev, makeLog(level, message)]);
+      setLogs((previous) => {
+        const next = [...previous, makeSystemLog(level, message)]
+        return next.slice(-50)
+      })
     } catch {
-      // Swallow — logging must never break the application.
+      // addLog must never throw
     }
-  }, []);
+  }, [])
 
-  // ── Mount lifecycle ───────────────────────────────────────────────────────
   useEffect(() => {
-    let cancelled = false;
+    if (initializedRef.current) {
+      return
+    }
+    initializedRef.current = true
 
-    async function init() {
+    let isCancelled = false
+
+    const initialize = async (): Promise<void> => {
       try {
-        // Step 1-2: loading_manifest
-        setStatus('loading_manifest');
-        addLog('info', 'Initializing ClarityRay system...');
+        const slug = localStorage.getItem(LOCAL_STORAGE_MODEL_KEY) ?? DEFAULT_MODEL_SLUG
+        addLog('info', `Initializing model: ${slug}`)
+        setStatus('loading_manifest')
+        setError(null)
+        await tick()
 
-        // Step 3: read selected slug
-        const slug =
-          (typeof window !== 'undefined' &&
-            localStorage.getItem(SELECTED_MODEL_KEY)) ||
-          DEFAULT_SLUG;
+        let apiClarityUrl: string | null = null
+        let apiOnnxUrl: string | null = null
 
-        // Step 4: resolve spec + model URLs
-        let specUrl: string;
-        let modelUrl: string;
         try {
-          ({ specUrl, modelUrl } = await resolveModelUrls(slug));
-        } catch {
-          if (cancelled) return;
-          const msg = 'Failed to load model registry.';
-          setStatus('error');
-          setError(msg);
-          addLog('error', msg);
-          return;
-        }
+          const detail = await fetchModelBySlug(slug)
+          const currentVersion = detail.current_version
 
-        if (cancelled) return;
-
-        // Steps 5-7: loading_spec
-        setStatus('loading_spec');
-        addLog('info', 'Loading model specification...');
-
-        let spec: ClaritySpec;
-        try {
-          const specRes = await fetch(specUrl);
-          if (!specRes.ok) {
-            throw new Error(`HTTP ${specRes.status} ${specRes.statusText}`);
+          if (currentVersion?.clarity_url && currentVersion.clarity_url.trim().length > 0) {
+            apiClarityUrl = currentVersion.clarity_url
           }
-          const specJson: unknown = await specRes.json();
-          spec = validateSpec(specJson);
+
+          if (currentVersion?.onnx_url && currentVersion.onnx_url.trim().length > 0) {
+            apiOnnxUrl = currentVersion.onnx_url
+          }
         } catch (err) {
-          if (cancelled) return;
-          const msg = `Model specification invalid: ${plainError(err)}`;
-          setStatus('error');
-          setError(msg);
-          addLog('error', msg);
-          return;
+          if (err instanceof BackendError) {
+            if (err.statusCode === 404) {
+              addLog('warn', `Model '${slug}' not found in platform, trying local spec`)
+            } else {
+              addLog('warn', `API unavailable: ${err.message}, trying local spec`)
+            }
+          } else {
+            addLog('warn', `API unavailable: ${toErrorMessage(err)}, trying local spec`)
+          }
         }
 
-        if (cancelled) return;
-
-        // Step 8-9: set modelInfo from spec
-        setModelInfo(modelInfoFromSpec(spec));
-        specRef.current = spec;
-        addLog('info', `Spec loaded: ${spec.id} v${spec.version}`);
-
-        // Check if session already cached — skip download if so
-        const cachedSession = sessionCache.get(spec.id);
-        if (cachedSession) {
-          addLog('info', 'Using cached inference session.');
-          setStatus('ready');
-          addLog('success', 'System ready — awaiting scan');
-          return;
+        if (isCancelled) {
+          return
         }
 
-        // Steps 10-15: downloading_model
-        setStatus('downloading_model');
-        addLog('info', 'Checking local model cache...');
+        setStatus('loading_spec')
+        addLog('info', 'Loading model specification...')
+        await tick()
 
-        let modelBuffer: ArrayBuffer;
-        let integritySkipped: boolean;
-        try {
-          ({ buffer: modelBuffer, integritySkipped } = await loadModel(modelUrl, spec));
-        } catch (err) {
-          if (cancelled) return;
-          const msg = `Model download failed: ${plainError(err)}`;
-          setStatus('error');
-          setError(msg);
-          addLog('error', msg);
-          return;
-        }
+        let specJson: unknown
 
-        if (cancelled) return;
-
-        // Steps 16-18: verifying_model
-        setStatus('verifying_model');
-        addLog('info', 'Verifying model...');
-
-        if (integritySkipped) {
-          addLog('warn', 'Integrity check skipped — hash not in spec');
+        if (apiClarityUrl) {
+          try {
+            specJson = await fetchJsonWithTimeout(apiClarityUrl, 15000)
+          } catch {
+            addLog('warn', 'Using local spec — API not available')
+            specJson = await fetchJsonWithTimeout(LOCAL_SPEC_FALLBACK_URL, 15000)
+          }
         } else {
-          addLog('info', 'Model integrity verified.');
+          addLog('warn', 'Using local spec — API not available')
+          specJson = await fetchJsonWithTimeout(LOCAL_SPEC_FALLBACK_URL, 15000)
         }
 
-        // Create ONNX InferenceSession
-        let session: ort.InferenceSession;
+        const spec = validateSpec(specJson)
+
+        if (isCancelled) {
+          return
+        }
+
+        specRef.current = spec
+        setModelInfo(toModelInfo(spec))
+        addLog('info', `Spec loaded: ${spec.id} v${spec.version}`)
+        addLog('info', `Classes: ${spec.output.classes.join(' · ')}`)
+
+        const modelUrl = apiOnnxUrl && apiOnnxUrl.trim().length > 0
+          ? apiOnnxUrl
+          : LOCAL_MODEL_FALLBACK_URL
+        modelUrlRef.current = modelUrl
+
+        setStatus('downloading_model')
+        addLog('info', 'Checking model cache...')
+        await tick()
+
+        const cacheStore = await caches.open(MODEL_CACHE_NAME)
+        const cacheMatch = await cacheStore.match(modelUrl)
+        let modelBuffer: ArrayBuffer
+
+        if (cacheMatch) {
+          addLog('info', 'Model loaded from cache')
+          modelBuffer = await cacheMatch.arrayBuffer()
+        } else {
+          addLog('info', 'Downloading model... (this may take a moment)')
+
+          const controller = new AbortController()
+          const timeoutId = window.setTimeout(() => controller.abort(), 45000)
+          let modelResponse: Response
+
+          try {
+            modelResponse = await fetch(modelUrl, { signal: controller.signal })
+          } finally {
+            window.clearTimeout(timeoutId)
+          }
+
+          if (!modelResponse.ok) {
+            throw new Error(`Failed to download model: HTTP ${modelResponse.status}`)
+          }
+
+          modelBuffer = await modelResponse.arrayBuffer()
+          await cacheStore.put(
+            modelUrl,
+            new Response(modelBuffer, {
+              headers: { 'Content-Type': 'application/octet-stream' },
+            })
+          )
+
+          addLog('info', `Model downloaded: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)}MB`)
+        }
+
+        if (isCancelled) {
+          return
+        }
+
+        setStatus('verifying_model')
+        addLog('info', 'Verifying model...')
+        await tick()
+
+        const expectedHash = spec.integrity?.sha256
+        if (expectedHash) {
+          const actualHash = await sha256(modelBuffer)
+          if (actualHash !== expectedHash.toLowerCase()) {
+            throw new Error('Model integrity check failed — file may be corrupted')
+          }
+          addLog('success', 'Integrity verified')
+        } else {
+          addLog('warn', 'No integrity hash in spec — skipping verification')
+        }
+
+        let reloadedCacheMatch: Response | undefined
         try {
-          session = await ort.InferenceSession.create(modelBuffer);
-          sessionCache.set(spec.id, session);
-        } catch (err) {
-          if (cancelled) return;
-          const msg = `Failed to initialize inference session: ${plainError(err)}`;
-          setStatus('error');
-          setError(msg);
-          addLog('error', msg);
-          return;
+          reloadedCacheMatch = await cacheStore.match(modelUrl)
+        } catch {
+          reloadedCacheMatch = undefined
         }
 
-        if (cancelled) return;
+        const modelBytes = reloadedCacheMatch ? await reloadedCacheMatch.arrayBuffer() : modelBuffer
+        const modelArray = new Uint8Array(modelBytes)
+        const sessionKey = getSessionKey(spec)
 
-        // Steps 19-20: ready
-        setStatus('ready');
-        addLog('success', 'System ready — awaiting scan');
+        if (!sessionCache.has(sessionKey)) {
+          const session = await ort.InferenceSession.create(modelArray)
+          sessionCache.set(sessionKey, session)
+          runtimeSessionCache.set(spec.id, session)
+        }
+
+        if (!isCancelled) {
+          setStatus('ready')
+          addLog('success', 'System ready — upload a scan to analyze')
+        }
       } catch (err) {
-        if (cancelled) return;
-        const msg = plainError(err);
-        setStatus('error');
-        setError(msg);
-        addLog('error', msg);
+        if (!isCancelled) {
+          const message = err instanceof Error ? err.message : 'Initialization failed'
+          const friendly =
+            message.toLowerCase().includes('timed out') || message.toLowerCase().includes('abort')
+              ? mapFriendlyError('timeout', err)
+              : message.toLowerCase().includes('cache')
+                ? mapFriendlyError('cache', err)
+                : message.toLowerCase().includes('download')
+                  ? mapFriendlyError('network', err)
+                  : message.toLowerCase().includes('integrity')
+                    ? message
+                    : message.toLowerCase().includes('model specification') || message.toLowerCase().includes('invalid')
+                      ? message
+                      : mapFriendlyError('onnx-load', err)
+
+          setStatus('error')
+          setError(friendly)
+          addLog('error', friendly)
+        }
       }
     }
 
-    void init();
+    void initialize()
 
     return () => {
-      cancelled = true;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      isCancelled = true
+    }
+  }, [addLog])
 
-  // ── runAnalysis ───────────────────────────────────────────────────────────
   const runAnalysis = useCallback(async (file: File): Promise<void> => {
-    // Guard: only run when ready
-    if (statusRef.current !== 'ready') return;
+    if (statusRef.current !== 'ready') {
+      return
+    }
 
-    const spec = specRef.current;
-    if (!spec) return;
+    const spec = specRef.current
+    if (!spec || !modelInfo) {
+      addLog('error', 'Model spec not loaded — cannot analyze')
+      return
+    }
 
-    const session = sessionCache.get(spec.id);
-    if (!session) return;
+    setStatus('processing')
+    setResult(null)
+    setError(null)
+    addLog('info', `Analysis started: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`)
 
     try {
-      // Step 1-3
-      setStatus('processing');
-      setResult(null);
-      setError(null);
-      addLog('info', `Analysis started: ${file.name}`);
+      const sessionKey = getSessionKey(spec)
+      if (!sessionCache.has(sessionKey)) {
+        const modelUrl = modelUrlRef.current
+        if (!modelUrl) {
+          throw new Error('Model is not initialized')
+        }
 
-      // Step 4-5: preprocess
-      const tensor = await preprocessImage(file, spec);
-      addLog('info', 'Image preprocessed');
+        const cacheStore = await caches.open(MODEL_CACHE_NAME)
+        const cached = await cacheStore.match(modelUrl)
+        if (!cached) {
+          throw new Error('Model cache miss')
+        }
 
-      // Step 6-7: inference
-      const inputShape = spec.input.shape;
-      const ortTensor = new ort.Tensor('float32', tensor, inputShape);
-
-      // Determine input/output node names
-      const inputName = session.inputNames[0] ?? 'input';
-      const outputs = await session.run({ [inputName]: ortTensor });
-
-      const outputName = session.outputNames[0] ?? 'output';
-      const outputTensor = outputs[outputName];
-      if (!outputTensor) {
-        throw new Error('Model run returned no output tensor.');
+        const modelBytes = await cached.arrayBuffer()
+        const modelArray = new Uint8Array(modelBytes)
+        const session = await ort.InferenceSession.create(modelArray)
+        sessionCache.set(sessionKey, session)
+        runtimeSessionCache.set(spec.id, session)
       }
 
-      const rawOutput =
-        outputTensor.data instanceof Float32Array
-          ? outputTensor.data
-          : Float32Array.from(outputTensor.data as ArrayLike<number>);
+      addLog('info', 'Preprocessing image...')
+      const tensor = await preprocessImage(file, spec)
+      addLog('info', 'Image preprocessed')
 
-      addLog('info', 'Inference complete');
+      addLog('info', 'Running inference...')
+      const startTime = Date.now()
+      const rawOutput = await runInference(tensor, spec)
+      const elapsed = Date.now() - startTime
+      addLog('info', `Inference complete in ${elapsed}ms`)
 
-      // Step 8: postprocess
-      const safeResult = postprocess(rawOutput, spec);
+      const safeResult = postprocess(rawOutput, spec)
 
-      // Steps 9-11: complete
-      setResult(safeResult);
-      setStatus('complete');
-      addLog(
-        'success',
-        `Finding: ${safeResult.primaryFinding} (${safeResult.confidencePercent}%)`,
-      );
-    } catch (err) {
-      const msg = plainError(err);
-      setStatus('error');
-      setError(msg);
-      addLog('error', msg);
+      setResult(safeResult)
+      setStatus('complete')
+      addLog('success', `Finding: ${safeResult.primaryFinding} (${safeResult.confidencePercent}%)`)
+
+      const tierText = {
+        possible_finding: '⚠ Possible finding detected',
+        low_confidence: '○ Low confidence result',
+        no_finding: '✓ No finding detected',
+      }[safeResult.safetyTier] ?? safeResult.safetyTier
+
+      addLog('info', tierText)
+    } catch (runErr) {
+      const baseMessage = toErrorMessage(runErr)
+
+      let context: HookErrorContext = 'generic'
+      if (baseMessage.toLowerCase().includes('preprocess') || baseMessage.toLowerCase().includes('decode image')) {
+        context = 'preprocess'
+      } else if (baseMessage.toLowerCase().includes('quotaexceedederror')) {
+        context = 'cache'
+      } else if (baseMessage.toLowerCase().includes('failed to fetch') || baseMessage.toLowerCase().includes('network')) {
+        context = 'network'
+      } else {
+        context = 'inference'
+      }
+
+      const message = mapFriendlyError(context, runErr)
+      setStatus('error')
+      setError(message)
+      addLog('error', message)
     }
-  }, [addLog]);
+  }, [addLog, modelInfo])
 
-  // ── reset ─────────────────────────────────────────────────────────────────
-  const reset = useCallback(() => {
-    setResult(null);
-    setError(null);
-    // Restore to ready if session cached, otherwise idle
-    const spec = specRef.current;
-    const hasSession = spec ? sessionCache.has(spec.id) : false;
-    setStatus(hasSession ? 'ready' : 'idle');
-    // Logs are append-only — never cleared
-  }, []);
+  const reset = useCallback((): void => {
+    setResult(null)
+    setError(null)
+
+    const spec = specRef.current
+    if (spec && sessionCache.has(getSessionKey(spec))) {
+      setStatus('ready')
+      return
+    }
+
+    setStatus('idle')
+  }, [])
 
   return {
     status,
@@ -444,5 +476,5 @@ export function useClarityRay(): UseClarityRayReturn {
     logs,
     runAnalysis,
     reset,
-  };
+  }
 }

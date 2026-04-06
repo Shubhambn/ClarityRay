@@ -1,179 +1,201 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from psycopg import Connection
-from psycopg.rows import dict_row
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
 
-from api.deps import get_db_connection
+from api.main import _build_model_summary, _get_models_from_db, _supabase_is_configured, _supabase_request
 
 router = APIRouter(prefix="/models", tags=["models"])
 
 
-# ─────────────────────────────────────────────
-# RESPONSE MODEL
-# ─────────────────────────────────────────────
-class FlatModelResponse(BaseModel):
-    slug: str
-    name: str
-    version: str
-    clarity_url: HttpUrl
-    model_url: HttpUrl
-
-
-# ─────────────────────────────────────────────
-# REQUEST MODEL (NEW ✅)
-# ─────────────────────────────────────────────
 class RegisterModelRequest(BaseModel):
     slug: str
     name: str
     version: str
     clarity_url: HttpUrl
     model_url: HttpUrl
+    spec: dict[str, Any]
 
 
-# ─────────────────────────────────────────────
-# GET /models
-# ─────────────────────────────────────────────
-@router.get("", response_model=list[FlatModelResponse])
-def get_models(
-    bodypart: str | None = Query(default=None),
-    modality: str | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
-    conn: Connection = Depends(get_db_connection),
-) -> list[FlatModelResponse]:
-    offset = (page - 1) * limit
-
-    query = """
-        SELECT
-            m.slug,
-            m.name,
-            mv.version,
-            mv.clarity_url,
-            mv.model_url
-        FROM models m
-        JOIN LATERAL (
-            SELECT version, clarity_url, model_url
-            FROM model_versions
-            WHERE model_id = m.id
-            ORDER BY created_at DESC
-            LIMIT 1
-        ) mv ON TRUE
-        WHERE m.status = 'published'
-          AND (%(bodypart)s::text IS NULL OR m.bodypart = %(bodypart)s::text)
-          AND (%(modality)s::text IS NULL OR m.modality = %(modality)s::text)
-        ORDER BY m.created_at DESC
-        LIMIT %(limit)s OFFSET %(offset)s
-    """
-
-    params = {
-        "bodypart": bodypart,
-        "modality": modality,
-        "limit": limit,
-        "offset": offset,
+def _build_validation_payload(model: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "passed": model.get("status") == "published",
+        "ran_at": model.get("published_at"),
+        "checks": [],
     }
 
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
 
-    return [FlatModelResponse(**row) for row in rows]
+async def _get_model_detail_from_db(slug: str) -> dict[str, Any] | None:
+    if not _supabase_is_configured():
+        return None
 
+    _, _, model_rows = await _supabase_request(
+        method="GET",
+        table="models",
+        query={
+            "select": "id,slug,name,bodypart,modality,status,created_at",
+            "slug": f"eq.{slug}",
+            "status": "eq.published",
+            "limit": "1",
+        },
+    )
+    if not model_rows:
+        return None
 
-# ─────────────────────────────────────────────
-# GET /models/{slug}
-# ─────────────────────────────────────────────
-@router.get("/{slug}", response_model=FlatModelResponse)
-def get_model_by_slug(
-    slug: str,
-    conn: Connection = Depends(get_db_connection),
-) -> FlatModelResponse:
-    query = """
-        SELECT
-            m.slug,
-            m.name,
-            mv.version,
-            mv.clarity_url,
-            mv.model_url
-        FROM models m
-        JOIN LATERAL (
-            SELECT version, clarity_url, model_url
-            FROM model_versions
-            WHERE model_id = m.id
-            ORDER BY created_at DESC
-            LIMIT 1
-        ) mv ON TRUE
-        WHERE m.slug = %(slug)s
-          AND m.status = 'published'
-        LIMIT 1
-    """
+    model_row = model_rows[0]
+    _, _, version_rows = await _supabase_request(
+        method="GET",
+        table="model_versions",
+        query={
+            "select": "id,model_id,version,clarity_url,model_url,created_at",
+            "model_id": f"eq.{model_row['id']}",
+            "order": "created_at.desc",
+            "limit": "1",
+        },
+    )
 
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, {"slug": slug})
-        row = cur.fetchone()
-
-    if row is None:
-        raise HTTPException(status_code=404, detail="Published model not found")
-
-    return FlatModelResponse(**row)
+    version = version_rows[0] if version_rows else None
+    base = _build_model_summary(model_row, version)
+    base["current_version"]["is_current"] = True
+    base["validation"] = _build_validation_payload(base)
+    return base
 
 
-# ─────────────────────────────────────────────
-# POST /models/register  🔥 CRITICAL
-# ─────────────────────────────────────────────
+async def _get_model_detail_with_fallback(slug: str) -> dict[str, Any] | None:
+    try:
+        detail = await _get_model_detail_from_db(slug)
+    except Exception:
+        detail = None
+
+    if detail:
+        return detail
+
+    fallback_models = await _get_models_from_db(bodypart=None, modality=None, page=1, limit=50)
+    for model in fallback_models["models"]:
+        if model["slug"] == slug:
+            fallback_detail = dict(model)
+            fallback_detail["current_version"] = dict(model["current_version"])
+            fallback_detail["current_version"]["is_current"] = True
+            fallback_detail["validation"] = _build_validation_payload(fallback_detail)
+            return fallback_detail
+
+    return None
+
+
+@router.get("")
+async def get_models(
+    bodypart: str | None = None,
+    modality: str | None = None,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> dict[str, Any]:
+    return await _get_models_from_db(
+        bodypart=bodypart,
+        modality=modality,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/{slug}")
+async def get_model_by_slug(slug: str) -> dict[str, Any]:
+    detail = await _get_model_detail_with_fallback(slug)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "Model not found", "slug": slug})
+    return detail
+
+
+@router.get("/{slug}/status")
+async def get_model_status(slug: str) -> dict[str, Any]:
+    detail = await _get_model_detail_with_fallback(slug)
+    if not detail:
+        return JSONResponse(status_code=404, content={"error": "Model not found", "slug": slug})
+
+    return {
+        "slug": slug,
+        "status": detail["status"],
+        "validation_passed": detail["validation"]["passed"],
+    }
+
+
 @router.post("/register")
-def register_model(
-    payload: RegisterModelRequest = Body(...),
-    conn: Connection = Depends(get_db_connection),
-):
-    """
-    Register model metadata from CLI
-    """
+async def register_model(payload: RegisterModelRequest, response: Response) -> dict[str, Any]:
+    if not _supabase_is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "database unavailable"},
+        )
+
+    bodypart = payload.spec.get("bodypart")
+    modality = payload.spec.get("modality")
 
     try:
-        with conn.transaction():
-
-            with conn.cursor() as cur:
-
-                # Insert model (or ignore if exists)
-                cur.execute("""
-                    INSERT INTO models (slug, name, status)
-                    VALUES (%s, %s, 'published')
-                    ON CONFLICT (slug) DO NOTHING
-                    RETURNING id
-                """, (payload.slug, payload.name))
-
-                result = cur.fetchone()
-
-                if result:
-                    model_id = result[0]
-                else:
-                    cur.execute(
-                        "SELECT id FROM models WHERE slug = %s",
-                        (payload.slug,)
-                    )
-                    model_id = cur.fetchone()[0]
-
-                # Insert version
-                cur.execute("""
-                    INSERT INTO model_versions (model_id, version, clarity_url, model_url)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (model_id, version) DO NOTHING
-                """, (
-                    model_id,
-                    payload.version,
-                    str(payload.clarity_url),
-                    str(payload.model_url),
-                ))
-
-        return {
-            "model_id": str(model_id),
-            "status": "registered",
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to register model: {str(e)}"
+        _, _, existing_rows = await _supabase_request(
+            method="GET",
+            table="models",
+            query={"select": "id,slug", "slug": f"eq.{payload.slug}", "limit": "1"},
         )
+
+        is_new = not bool(existing_rows)
+        if is_new:
+            _, _, inserted_rows = await _supabase_request(
+                method="POST",
+                table="models",
+                payload=[
+                    {
+                        "slug": payload.slug,
+                        "name": payload.name,
+                        "status": "draft",
+                        "bodypart": bodypart,
+                        "modality": modality,
+                    }
+                ],
+                prefer="return=representation",
+            )
+            model_id = inserted_rows[0]["id"]
+        else:
+            model_id = existing_rows[0]["id"]
+            await _supabase_request(
+                method="PATCH",
+                table="models",
+                query={"id": f"eq.{model_id}"},
+                payload={
+                    "name": payload.name,
+                    "bodypart": bodypart,
+                    "modality": modality,
+                },
+                prefer="return=minimal",
+            )
+
+        await _supabase_request(
+            method="POST",
+            table="model_versions",
+            query={"on_conflict": "model_id,version"},
+            payload=[
+                {
+                    "model_id": model_id,
+                    "version": payload.version,
+                    "clarity_url": str(payload.clarity_url),
+                    "model_url": str(payload.model_url),
+                }
+            ],
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+
+        response.status_code = status.HTTP_201_CREATED if is_new else status.HTTP_200_OK
+        return {
+            "model_id": model_id,
+            "slug": payload.slug,
+            "status": "pending",
+            "message": "Model registered" if is_new else "Model updated",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": "Failed to register model", "reason": str(exc)},
+        ) from exc

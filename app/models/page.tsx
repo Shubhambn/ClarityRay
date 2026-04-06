@@ -1,405 +1,467 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import TopBar from '@/components/nav/TopBar';
-import ModelCard, { type ModelCardData } from '@/components/models/ModelCard';
+import ModelCard from '@/components/models/ModelCard';
+import {
+  BackendError,
+  checkBackendHealth,
+  fetchModels,
+  type ModelSummary,
+  type ModelsResponse,
+} from '@/lib/api/client';
 
-/* ─── Raw API types ─────────────────────────────────────────────────────── */
+const DEFAULT_LOCAL_SLUG = 'densenet121-chest';
+const SELECTED_MODEL_KEY = 'clarityray_selected_model';
 
-interface RawVersion {
-  version: string;
-  file_size_mb?: number;
+const LOCAL_FALLBACK_MODEL: ModelSummary = {
+  id: 'densenet121-chest',
+  slug: 'densenet121-chest',
+  name: 'DenseNet121 Chest X-ray Binary Classifier',
+  bodypart: 'chest',
+  modality: 'xray',
+  status: 'local',
+  published_at: null,
+  current_version: {
+    id: 'densenet121-chest@1.0.0',
+    version: '1.0.0',
+    onnx_url: '/models/densenet121-chest/model.onnx',
+    clarity_url: '/models/densenet121-chest/clarity.json',
+    file_size_mb: null,
+    is_current: true,
+  },
+};
+
+const BODYPART_OPTIONS = ['all', 'chest', 'brain', 'bone', 'abdomen', 'spine', 'other'] as const;
+const MODALITY_OPTIONS = ['all', 'xray', 'ct', 'mri', 'ultrasound', 'pathology', 'other'] as const;
+
+function isActiveFilter(value: string): boolean {
+  return value !== 'all';
 }
 
-interface RawModelItem {
-  slug: string;
-  name: string;
-  bodypart: string;
-  modality: string;
-  status: string;
-  current_version?: RawVersion | null;
-  certified?: boolean;
-  output_classes?: string[];
-  safety_tier?: string;
+function toFilters(bodypartFilter: string, modalityFilter: string): { bodypart?: string; modality?: string } {
+  return {
+    bodypart: isActiveFilter(bodypartFilter) ? bodypartFilter : undefined,
+    modality: isActiveFilter(modalityFilter) ? modalityFilter : undefined,
+  };
 }
 
-/* ─── Guards ────────────────────────────────────────────────────────────── */
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function parseItems(payload: unknown): ModelCardData[] {
-  if (!isRecord(payload) || !Array.isArray(payload['items'])) {
-    throw new Error('Invalid /api/models response shape.');
+function normalizeError(error: unknown): string {
+  if (error instanceof BackendError) {
+    return error.message;
   }
 
-  return (payload['items'] as unknown[]).flatMap((raw) => {
-    if (!isRecord(raw)) return [];
+  if (error instanceof Error) {
+    return error.message;
+  }
 
-    const slug = typeof raw['slug'] === 'string' ? raw['slug'] : null;
-    const name = typeof raw['name'] === 'string' ? raw['name'] : null;
-    if (!slug || !name) return [];
-
-    const status = typeof raw['status'] === 'string' ? raw['status'] : '';
-    if (status.toLowerCase() !== 'published') return [];
-
-    const bodypart  = typeof raw['bodypart']  === 'string' ? raw['bodypart']  : '';
-    const modality  = typeof raw['modality']  === 'string' ? raw['modality']  : '';
-    const certified = typeof raw['certified'] === 'boolean' ? raw['certified'] : false;
-    const safetyTier = typeof raw['safety_tier'] === 'string' ? raw['safety_tier'] : 'screening';
-
-    const outputClasses: string[] = Array.isArray(raw['output_classes'])
-      ? (raw['output_classes'] as unknown[]).filter((c): c is string => typeof c === 'string')
-      : [];
-
-    let version: string | undefined;
-    let fileSizeMb: number | undefined;
-    const cv = raw['current_version'];
-    if (isRecord(cv)) {
-      if (typeof cv['version'] === 'string') version = cv['version'];
-      if (typeof cv['file_size_mb'] === 'number') fileSizeMb = cv['file_size_mb'];
-    }
-
-    return [{ slug, name, bodypart, modality, version, fileSizeMb, outputClasses, certified, safetyTier }];
-  });
+  return 'Unknown error while loading models.';
 }
 
-/* ─── Skeleton card ─────────────────────────────────────────────────────── */
-
-function SkeletonCard() {
-  return <div className="skeleton-card panel" aria-hidden="true" />;
+function normalizeModelsForState(models: ModelSummary[]): ModelSummary[] {
+  return models.map((model) => ({
+    ...model,
+    bodypart: model.bodypart == null ? 'other' : model.bodypart,
+    modality: model.modality == null ? 'other' : model.modality,
+    current_version: model.current_version
+      ? {
+          ...model.current_version,
+          is_current: model.current_version.is_current ?? true,
+        }
+      : null,
+  }));
 }
 
-/* ─── Filter dropdown ───────────────────────────────────────────────────── */
-
-interface FilterSelectProps {
-  id: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
-  placeholder: string;
+async function fetchModelsWithDeadline(filters: {
+  bodypart?: string;
+  modality?: string;
+}): Promise<ModelsResponse> {
+  return await Promise.race<ModelsResponse>([
+    fetchModels(filters),
+    new Promise<never>((_, reject) => {
+      const timeout = setTimeout(() => {
+        clearTimeout(timeout);
+        reject(new BackendError('Request timed out after 10 seconds', 408, '/models'));
+      }, 10_000);
+    }),
+  ]);
 }
-
-function FilterSelect({ id, value, onChange, options, placeholder }: FilterSelectProps) {
-  return (
-    <div className="filter-select-wrap">
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="filter-select"
-        aria-label={placeholder}
-      >
-        <option value="all">{placeholder}</option>
-        {options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt.replace(/[-_]/g, ' ')}
-          </option>
-        ))}
-      </select>
-      <ChevronIcon />
-    </div>
-  );
-}
-
-function ChevronIcon() {
-  return (
-    <svg
-      className="filter-select-chevron"
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/* ─── Page ──────────────────────────────────────────────────────────────── */
 
 export default function ModelsPage() {
-  const [models, setModels]             = useState<ModelCardData[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState<string | null>(null);
-  const [bodypartFilter, setBodypartFilter] = useState('all');
-  const [modalityFilter, setModalityFilter] = useState('all');
+  const router = useRouter();
 
-  const loadModels = async () => {
-    setLoading(true);
+  const [models, setModels] = useState<ModelSummary[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [backendOnline, setBackendOnline] = useState<boolean>(true);
+  const [bodypartFilter, setBodypartFilter] = useState<string>('all');
+  const [modalityFilter, setModalityFilter] = useState<string>('all');
+
+  const hasActiveFilters = useMemo(
+    () => isActiveFilter(bodypartFilter) || isActiveFilter(modalityFilter),
+    [bodypartFilter, modalityFilter]
+  );
+
+  const useLocalFallback = useCallback(() => {
+    setModels([LOCAL_FALLBACK_MODEL]);
     setError(null);
-    try {
-      const res = await fetch('/api/models', { cache: 'no-store' });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
-      const payload: unknown = await res.json();
-      setModels(parseItems(payload));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to fetch models.');
-      setModels([]);
-    } finally {
-      setLoading(false);
+  }, []);
+
+  const goToLocalAnalysis = useCallback(() => {
+    window.localStorage.setItem(SELECTED_MODEL_KEY, DEFAULT_LOCAL_SLUG);
+    router.push('/analysis');
+  }, [router]);
+
+  const loadModels = useCallback(
+    async (options?: { preserveErrorForOffline?: boolean }) => {
+      const preserveErrorForOffline = options?.preserveErrorForOffline ?? false;
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const filters = toFilters(bodypartFilter, modalityFilter);
+        const response = await fetchModelsWithDeadline(filters);
+        setModels(normalizeModelsForState(response.models));
+        console.log('[models] setModels from loadModels:', response.models);
+      } catch (err: unknown) {
+        const message = normalizeError(err);
+
+        if (!backendOnline && !preserveErrorForOffline) {
+          setModels([LOCAL_FALLBACK_MODEL]);
+          setError(null);
+        } else {
+          setModels([]);
+          setError(message);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [backendOnline, bodypartFilter, modalityFilter]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function init(): Promise<void> {
+      setIsLoading(true);
+      setError(null);
+
+      const health = await checkBackendHealth();
+      if (cancelled) return;
+
+      setBackendOnline(health.ok);
+
+      if (!health.ok) {
+        setModels([LOCAL_FALLBACK_MODEL]);
+      }
+
+      try {
+        const filters = toFilters(bodypartFilter, modalityFilter);
+        const response = await fetchModelsWithDeadline(filters);
+        if (cancelled) return;
+        setModels(normalizeModelsForState(response.models));
+        console.log('[models] setModels from init:', response.models);
+      } catch (err: unknown) {
+        if (cancelled) return;
+
+        if (!health.ok) {
+          setModels([LOCAL_FALLBACK_MODEL]);
+          setError(null);
+        } else {
+          setModels([]);
+          setError(normalizeError(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
     }
-  };
 
-  useEffect(() => { void loadModels(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    void init();
 
-  /* Filter options derived from loaded models */
-  const bodypartOptions = useMemo(
-    () => Array.from(new Set(models.map((m) => m.bodypart).filter(Boolean))).sort(),
-    [models],
-  );
-  const modalityOptions = useMemo(
-    () => Array.from(new Set(models.map((m) => m.modality).filter(Boolean))).sort(),
-    [models],
-  );
-
-  const filtered = useMemo(() => {
-    return models.filter((m) => {
-      if (bodypartFilter !== 'all' && m.bodypart !== bodypartFilter) return false;
-      if (modalityFilter !== 'all' && m.modality !== modalityFilter) return false;
-      return true;
-    });
-  }, [models, bodypartFilter, modalityFilter]);
-
-  const hasActiveFilters = bodypartFilter !== 'all' || modalityFilter !== 'all';
+    return () => {
+      cancelled = true;
+    };
+  }, [bodypartFilter, modalityFilter]);
 
   return (
     <>
       <TopBar />
 
+      {!backendOnline && (
+        <div className="backend-offline-banner" role="status" aria-live="polite">
+          <p className="backend-offline-banner__title">⚠ Backend API is offline — showing local models only</p>
+          <p className="backend-offline-banner__hint mono">Start the API: cd api && uvicorn main:app --reload</p>
+        </div>
+      )}
+
       <main className="models-page">
-        <div className="models-shell">
-          {/* Page header */}
+        <section className="models-shell">
           <header className="models-header">
             <div>
-              <p className="models-header__eyebrow mono">MODEL LIBRARY</p>
-              <h1 className="models-header__title">Published verified models</h1>
+              <p className="mono label">MODEL LIBRARY</p>
+              <h1 className="models-title">Published models</h1>
             </div>
-            <div className="status-dot" aria-hidden="true" />
           </header>
 
-          {/* Filter row */}
-          <div className="models-filters" role="search" aria-label="Filter models">
-            <FilterSelect
-              id="bodypart-filter"
+          <div className="filter-row" role="search" aria-label="Filter models">
+            <select
               value={bodypartFilter}
-              onChange={setBodypartFilter}
-              options={bodypartOptions}
-              placeholder="All body parts"
-            />
-            <FilterSelect
-              id="modality-filter"
+              onChange={(event) => setBodypartFilter(event.target.value)}
+              className="select"
+              aria-label="Filter by bodypart"
+            >
+              {BODYPART_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option === 'all' ? 'All bodyparts' : option}
+                </option>
+              ))}
+            </select>
+
+            <select
               value={modalityFilter}
-              onChange={setModalityFilter}
-              options={modalityOptions}
-              placeholder="All modalities"
-            />
+              onChange={(event) => setModalityFilter(event.target.value)}
+              className="select"
+              aria-label="Filter by modality"
+            >
+              {MODALITY_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option === 'all' ? 'All modalities' : option}
+                </option>
+              ))}
+            </select>
+
             {hasActiveFilters && (
               <button
-                className="models-filters__clear"
-                onClick={() => { setBodypartFilter('all'); setModalityFilter('all'); }}
+                type="button"
+                className="clear-filters-link"
+                onClick={() => {
+                  setBodypartFilter('all');
+                  setModalityFilter('all');
+                }}
               >
                 Clear filters
               </button>
             )}
           </div>
 
-          {/* Loading — 6 skeleton cards */}
-          {loading && (
+          {isLoading && (
             <div className="models-grid" aria-busy="true" aria-label="Loading models">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <SkeletonCard key={i} />
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="panel skeleton" style={{ height: '180px' }} aria-hidden="true" />
               ))}
             </div>
           )}
 
-          {/* Error */}
-          {!loading && error && (
-            <div className="models-state panel panel-accent">
-              <p className="models-state__title">Failed to load models</p>
-              <p className="models-state__body">{error}</p>
-              <button className="btn models-state__retry" onClick={() => void loadModels()}>
-                Retry
+          {!isLoading && error && (
+            <div className="error-panel panel" role="alert">
+              <h2 className="error-panel__title">Failed to load models</h2>
+              <p className="error-panel__message mono">{error}</p>
+              <div className="error-panel__actions">
+                <button type="button" className="btn" onClick={() => void loadModels({ preserveErrorForOffline: true })}>
+                  Retry
+                </button>
+                <button type="button" className="btn" onClick={useLocalFallback}>
+                  Use local model
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!isLoading && !error && models.length === 0 && (
+            <div className="empty-panel panel">
+              <div className="empty-icon" aria-hidden="true">🗃️✕</div>
+              <h2 className="empty-title">No models published yet</h2>
+              <p className="empty-subtitle">
+                Models appear here after being pushed with the clarity CLI and published.
+              </p>
+              <button type="button" className="btn" onClick={goToLocalAnalysis}>
+                Use local model
               </button>
             </div>
           )}
 
-          {/* Empty */}
-          {!loading && !error && filtered.length === 0 && (
-            <div className="models-state panel">
-              <p className="models-state__title">No published models match your filters</p>
-              {hasActiveFilters && (
-                <button
-                  className="models-state__clear-link"
-                  onClick={() => { setBodypartFilter('all'); setModalityFilter('all'); }}
-                >
-                  Clear filters
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Model grid */}
-          {!loading && !error && filtered.length > 0 && (
-            <div className="models-grid" aria-label="Published models">
-              {filtered.map((model) => (
-                <ModelCard key={model.slug} model={model} />
+          {!isLoading && !error && models.length > 0 && (
+            <div className="models-grid" aria-label="Available models">
+              {models.map((model) => (
+                <ModelCard key={model.id || model.slug} model={model} />
               ))}
             </div>
           )}
-        </div>
+        </section>
       </main>
 
       <style>{`
         .models-page {
           min-height: 100vh;
           background: var(--bg-base);
-          padding-top: 80px;
-          padding-bottom: 64px;
-        }
-        .models-shell {
-          width: min(1120px, 100% - 2rem);
-          margin-inline: auto;
-          display: flex;
-          flex-direction: column;
-          gap: 24px;
+          padding: calc(var(--space-16) + var(--space-4)) var(--space-4) var(--space-8);
         }
 
-        /* Header */
+        .models-shell {
+          width: min(1120px, 100%);
+          margin: 0 auto;
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-4);
+        }
+
         .models-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding-bottom: 4px;
           border-bottom: 1px solid var(--border-subtle);
+          padding-bottom: var(--space-2);
         }
-        .models-header__eyebrow {
-          font-size: 10px;
-          letter-spacing: 0.1em;
-          color: var(--accent-primary);
-          margin-bottom: 4px;
-        }
-        .models-header__title {
-          font-family: var(--font-ui);
+
+        .models-title {
           font-size: 1.5rem;
-          font-weight: 400;
+          line-height: 1.2;
+          font-weight: 600;
           color: var(--text-primary);
-          letter-spacing: -0.02em;
         }
 
-        /* Filters */
-        .models-filters {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-          flex-wrap: wrap;
+        .backend-offline-banner {
+          background: rgba(245, 158, 11, 0.08);
+          border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+          padding: var(--sp-3, var(--space-3)) var(--sp-6, var(--space-6));
+          margin-top: calc(var(--space-16) + var(--space-2));
         }
-        .filter-select-wrap {
-          position: relative;
-          display: flex;
-          align-items: center;
+
+        .backend-offline-banner__title {
+          color: var(--status-warning);
+          font-size: 0.875rem;
+          font-weight: 600;
         }
-        .filter-select {
-          appearance: none;
-          background: var(--bg-elevated);
-          border: 1px solid var(--border-subtle);
-          border-radius: var(--radius-md);
-          padding: 6px 28px 6px 10px;
-          font-family: var(--font-mono);
-          font-size: 11px;
+
+        .backend-offline-banner__hint {
+          margin-top: var(--space-1);
           color: var(--text-secondary);
-          outline: none;
-          cursor: pointer;
-          transition: border-color var(--transition-base);
-        }
-        .filter-select:focus {
-          border-color: var(--border-accent);
-          color: var(--text-primary);
-        }
-        .filter-select:hover {
-          border-color: var(--border-default);
-        }
-        .filter-select-chevron {
-          position: absolute;
-          right: 8px;
-          pointer-events: none;
-          color: var(--text-tertiary);
-        }
-        .models-filters__clear {
-          background: none;
-          border: none;
-          font-family: var(--font-mono);
-          font-size: 11px;
-          color: var(--accent-primary);
-          cursor: pointer;
-          padding: 6px 4px;
-          opacity: 0.75;
-          transition: opacity var(--transition-fast);
-        }
-        .models-filters__clear:hover {
-          opacity: 1;
+          font-size: 0.75rem;
         }
 
-        /* Grid */
+        .filter-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        .select {
+          min-width: 180px;
+          border: 1px solid var(--border-subtle);
+          background: var(--bg-elevated);
+          color: var(--text-primary);
+          border-radius: var(--radius-md);
+          padding: var(--space-2) var(--space-3);
+          font-family: var(--font-ui);
+          font-size: 0.875rem;
+        }
+
+        .clear-filters-link {
+          border: none;
+          background: transparent;
+          color: var(--accent-primary);
+          font-family: var(--font-mono);
+          font-size: 0.75rem;
+          cursor: pointer;
+          text-decoration: underline;
+          text-underline-offset: 3px;
+        }
+
         .models-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 16px;
-        }
-        @media (max-width: 900px) {
-          .models-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-        @media (max-width: 639px) {
-          .models-grid { grid-template-columns: 1fr; }
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          gap: var(--space-4);
         }
 
-        /* Skeleton card */
-        .skeleton-card {
-          height: 180px;
-          border-radius: var(--radius-lg);
-          background: var(--bg-elevated);
-          animation: skeleton-pulse 1.6s ease-in-out infinite;
-        }
-        @keyframes skeleton-pulse {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.45; }
+        .skeleton {
+          position: relative;
+          overflow: hidden;
+          opacity: 0.75;
         }
 
-        /* State panels */
-        .models-state {
-          padding: 32px 24px;
+        .skeleton::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          transform: translateX(-100%);
+          background: linear-gradient(
+            90deg,
+            transparent,
+            rgba(255, 255, 255, 0.08),
+            transparent
+          );
+          animation: model-skeleton-shimmer 1.4s infinite;
+        }
+
+        @keyframes model-skeleton-shimmer {
+          100% {
+            transform: translateX(100%);
+          }
+        }
+
+        .error-panel {
+          border-left: 3px solid var(--status-danger);
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-2);
+        }
+
+        .error-panel__title {
+          font-size: 1rem;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+
+        .error-panel__message {
+          color: var(--status-danger);
+          font-size: 0.75rem;
+        }
+
+        .error-panel__actions {
+          display: flex;
+          gap: var(--space-2);
+          flex-wrap: wrap;
+        }
+
+        .empty-panel {
           display: flex;
           flex-direction: column;
           align-items: flex-start;
-          gap: 12px;
+          gap: var(--space-2);
         }
-        .models-state__title {
-          font-family: var(--font-ui);
-          font-size: 0.9375rem;
-          font-weight: 500;
-          color: var(--text-primary);
-        }
-        .models-state__body {
-          font-family: var(--font-mono);
-          font-size: 12px;
+
+        .empty-icon {
+          font-size: 1.4rem;
+          line-height: 1;
           color: var(--text-secondary);
         }
-        .models-state__retry {
-          margin-top: 4px;
+
+        .empty-title {
+          font-size: 1rem;
+          font-weight: 600;
+          color: var(--text-primary);
         }
-        .models-state__clear-link {
-          background: none;
-          border: none;
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--accent-primary);
-          cursor: pointer;
-          padding: 0;
-          opacity: 0.8;
+
+        .empty-subtitle {
+          color: var(--text-secondary);
+          font-size: 0.875rem;
+          max-width: 48ch;
         }
-        .models-state__clear-link:hover { opacity: 1; }
+
+        @media (max-width: 768px) {
+          .models-page {
+            padding: calc(var(--space-16) + var(--space-3)) var(--space-3) var(--space-6);
+          }
+
+          .select {
+            min-width: 100%;
+          }
+        }
       `}</style>
     </>
   );

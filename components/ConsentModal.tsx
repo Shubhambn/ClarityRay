@@ -1,17 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 const CONSENT_KEY = 'clarityray_consent_v1';
 
-export function ConsentModal() {
-//   const [isVisible, setIsVisible] = useState<boolean>(false);
+interface ConsentModalProps {
+  onAccept: () => void;
+}
+
+export function ConsentModal({ onAccept }: ConsentModalProps) {
   const [checked, setChecked] = useState<boolean>(false);
 
-  const [isVisible, setIsVisible] = useState<boolean>(() => {
-  if (typeof window === 'undefined') return false;
-  return localStorage.getItem(CONSENT_KEY) !== 'accepted';
-});
+  const handleAccept = (): void => {
+    localStorage.setItem(CONSENT_KEY, 'accepted');
+    onAccept();
+  };
 
   const bodyText = useMemo(
     () =>
@@ -25,10 +28,6 @@ replace evaluation by a qualified medical professional.
 • Always consult a licensed physician for diagnosis and treatment.`,
     []
   );
-
-  if (!isVisible) {
-    return null;
-  }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4" aria-modal="true" role="dialog">
@@ -51,10 +50,7 @@ replace evaluation by a qualified medical professional.
           type="button"
           className="mt-6 w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
           disabled={!checked}
-          onClick={() => {
-            localStorage.setItem(CONSENT_KEY, 'accepted');
-            setIsVisible(false);
-          }}
+          onClick={handleAccept}
         >
           I Understand — Continue
         </button>
