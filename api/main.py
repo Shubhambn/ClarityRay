@@ -5,7 +5,6 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
@@ -22,8 +21,6 @@ logger = logging.getLogger("clarityray.api")
 app = FastAPI(title="ClarityRay API", version="1.0.0")
 
 SERVICE_NAME = "clarityray-platform"
-ROOT_DIR = Path(__file__).resolve().parent.parent
-FALLBACK_CLARITY_PATH = ROOT_DIR / "public" / "models" / "densenet121-chest" / "clarity.json"
 DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
@@ -154,56 +151,6 @@ def _build_model_summary(model: dict[str, Any], version: dict[str, Any] | None) 
     }
 
 
-async def _get_models_from_local_fallback(
-    *,
-    bodypart: str | None,
-    modality: str | None,
-    page: int,
-    limit: int,
-) -> dict[str, Any]:
-    if not FALLBACK_CLARITY_PATH.exists():
-        logger.warning("Fallback mode enabled but clarity.json is missing: %s", FALLBACK_CLARITY_PATH)
-        return {"models": [], "total": 0, "page": page, "limit": limit}
-
-    raw = FALLBACK_CLARITY_PATH.read_text(encoding="utf-8")
-    spec = json.loads(raw)
-
-    model = {
-        "id": "local-densenet121-chest",
-        "slug": "densenet121-chest",
-        "name": spec.get("name", "DenseNet121 Chest X-Ray"),
-        "bodypart": spec.get("bodypart", "chest"),
-        "modality": spec.get("modality", "xray"),
-        "status": "published",
-        "published_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "current_version": {
-            "id": "local-densenet121-chest-v1-0-0",
-            "version": spec.get("version", "1.0.0"),
-            "onnx_url": spec.get("model", {}).get("file", "/models/densenet121-chest/model.onnx"),
-            "clarity_url": "/models/densenet121-chest/clarity.json",
-            "file_size_mb": None,
-        },
-    }
-
-    if bodypart and model["bodypart"] != bodypart:
-        filtered: list[dict[str, Any]] = []
-    elif modality and model["modality"] != modality:
-        filtered = []
-    else:
-        filtered = [model]
-
-    offset = (page - 1) * limit
-    paged = filtered[offset : offset + limit]
-
-    logger.warning("Using local fallback model list because database is unavailable")
-    return {
-        "models": paged,
-        "total": len(filtered),
-        "page": page,
-        "limit": limit,
-    }
-
-
 async def _get_models_from_db(
     *,
     bodypart: str | None,
@@ -211,77 +158,66 @@ async def _get_models_from_db(
     page: int,
     limit: int,
 ) -> dict[str, Any]:
-    # Try Supabase first
-    # On any exception: fall back to local file
-    try:
-        if not _supabase_is_configured():
-            raise RuntimeError("Supabase environment variables are missing")
+    if not _supabase_is_configured():
+        raise RuntimeError("Supabase environment variables are missing")
 
-        offset = (page - 1) * limit
-        query: dict[str, str] = {
-            "select": "id,slug,name,bodypart,modality,status,created_at",
-            "status": "eq.published",
-            "order": "created_at.desc",
-            "limit": str(limit),
-            "offset": str(offset),
-        }
-        if bodypart:
-            query["bodypart"] = f"eq.{bodypart}"
-        if modality:
-            query["modality"] = f"eq.{modality}"
+    offset = (page - 1) * limit
+    query: dict[str, str] = {
+        "select": "id,slug,name,bodypart,modality,status,created_at",
+        "status": "eq.published",
+        "order": "created_at.desc",
+        "limit": str(limit),
+        "offset": str(offset),
+    }
+    if bodypart:
+        query["bodypart"] = f"eq.{bodypart}"
+    if modality:
+        query["modality"] = f"eq.{modality}"
 
-        _, headers, models_data = await _supabase_request(
-            method="GET",
-            table="models",
-            query=query,
-            prefer="count=exact",
-        )
-        total = _extract_total_count(headers)
+    _, headers, models_data = await _supabase_request(
+        method="GET",
+        table="models",
+        query=query,
+        prefer="count=exact",
+    )
+    total = _extract_total_count(headers)
 
-        if not models_data:
-            return {
-                "models": [],
-                "total": total,
-                "page": page,
-                "limit": limit,
-            }
-
-        model_ids = [model["id"] for model in models_data]
-        ids_expr = ",".join(model_ids)
-        _, _, versions_data = await _supabase_request(
-            method="GET",
-            table="model_versions",
-            query={
-                "select": "id,model_id,version,clarity_url,model_url,created_at",
-                "model_id": f"in.({ids_expr})",
-                "order": "created_at.desc",
-            },
-        )
-
-        latest_version_by_model: dict[str, dict[str, Any]] = {}
-        for version in versions_data:
-            model_id = version["model_id"]
-            if model_id not in latest_version_by_model:
-                latest_version_by_model[model_id] = version
-
-        models = [
-            _build_model_summary(model, latest_version_by_model.get(model["id"]))
-            for model in models_data
-        ]
+    if not models_data:
         return {
-            "models": models,
+            "models": [],
             "total": total,
             "page": page,
             "limit": limit,
         }
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to fetch models from database: %s", exc)
-        return await _get_models_from_local_fallback(
-            bodypart=bodypart,
-            modality=modality,
-            page=page,
-            limit=limit,
-        )
+
+    model_ids = [model["id"] for model in models_data]
+    ids_expr = ",".join(model_ids)
+    _, _, versions_data = await _supabase_request(
+        method="GET",
+        table="model_versions",
+        query={
+            "select": "id,model_id,version,clarity_url,model_url,created_at",
+            "model_id": f"in.({ids_expr})",
+            "order": "created_at.desc",
+        },
+    )
+
+    latest_version_by_model: dict[str, dict[str, Any]] = {}
+    for version in versions_data:
+        model_id = version["model_id"]
+        if model_id not in latest_version_by_model:
+            latest_version_by_model[model_id] = version
+
+    models = [
+        _build_model_summary(model, latest_version_by_model.get(model["id"]))
+        for model in models_data
+    ]
+    return {
+        "models": models,
+        "total": total,
+        "page": page,
+        "limit": limit,
+    }
 
 
 async def _count_published_models() -> int:

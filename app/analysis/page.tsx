@@ -91,10 +91,19 @@ export default function AnalysisPage() {
   const [imageURL, setImageURL] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
-  const [consented, setConsented] = useState(false);
-  const [personaBannerDismissed, setPersonaBannerDismissed] = useState(false);
+  const [consented, setConsented] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return localStorage.getItem(CONSENT_KEY) === 'accepted';
+  });
+  const [personaBannerDismissed, setPersonaBannerDismissed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return sessionStorage.getItem(PERSONA_BANNER_DISMISS_KEY) === '1';
+  });
   const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
-  const [stageHistory, setStageHistory] = useState<ClarityRayStatus[]>([]);
 
   const isLoadingStatus =
     hook.status === 'loading_manifest' ||
@@ -105,14 +114,6 @@ export default function AnalysisPage() {
   const uploadDisabled = hook.status !== 'ready' && hook.status !== 'complete';
 
   useEffect(() => {
-    const consent = localStorage.getItem(CONSENT_KEY);
-    setConsented(consent === 'accepted');
-
-    const dismissed = sessionStorage.getItem(PERSONA_BANNER_DISMISS_KEY);
-    setPersonaBannerDismissed(dismissed === '1');
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (imageURL) {
         URL.revokeObjectURL(imageURL);
@@ -120,29 +121,25 @@ export default function AnalysisPage() {
     };
   }, [imageURL]);
 
-  useEffect(() => {
-    const current = hook.status;
-
-    if (current === 'idle') {
-      setStageHistory([]);
-      return;
+  const stageHistory = useMemo<ClarityRayStatus[]>(() => {
+    if (hook.status === 'idle') {
+      return [];
     }
 
-    if (!isInitStage(current)) {
-      return;
+    if (hook.status === 'processing' || hook.status === 'complete' || hook.status === 'error') {
+      return [...INIT_STAGE_ORDER];
     }
 
-    setStageHistory((previous) => {
-      if (previous.includes(current)) {
-        return previous;
-      }
-      return [...previous, current];
-    });
+    if (!isInitStage(hook.status)) {
+      return [];
+    }
+
+    const currentIndex = INIT_STAGE_ORDER.indexOf(hook.status);
+    return currentIndex >= 0 ? INIT_STAGE_ORDER.slice(0, currentIndex + 1) : [];
   }, [hook.status]);
 
   useEffect(() => {
     if (!imageURL || hook.status !== 'complete' || hook.result === null) {
-      setHeatmap(null);
       return;
     }
 
@@ -404,7 +401,6 @@ export default function AnalysisPage() {
             <UploadZone
               onFileSelected={onFileSelected}
               isDisabled={uploadDisabled}
-              currentFile={selectedFile}
             />
           </section>
 

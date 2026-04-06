@@ -64,25 +64,8 @@ async def _get_model_detail_from_db(slug: str) -> dict[str, Any] | None:
     return base
 
 
-async def _get_model_detail_with_fallback(slug: str) -> dict[str, Any] | None:
-    try:
-        detail = await _get_model_detail_from_db(slug)
-    except Exception:
-        detail = None
-
-    if detail:
-        return detail
-
-    fallback_models = await _get_models_from_db(bodypart=None, modality=None, page=1, limit=50)
-    for model in fallback_models["models"]:
-        if model["slug"] == slug:
-            fallback_detail = dict(model)
-            fallback_detail["current_version"] = dict(model["current_version"])
-            fallback_detail["current_version"]["is_current"] = True
-            fallback_detail["validation"] = _build_validation_payload(fallback_detail)
-            return fallback_detail
-
-    return None
+async def _get_model_detail(slug: str) -> dict[str, Any] | None:
+    return await _get_model_detail_from_db(slug)
 
 
 @router.get("")
@@ -92,17 +75,30 @@ async def get_models(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=50),
 ) -> dict[str, Any]:
-    return await _get_models_from_db(
-        bodypart=bodypart,
-        modality=modality,
-        page=page,
-        limit=limit,
-    )
+    try:
+        return await _get_models_from_db(
+            bodypart=bodypart,
+            modality=modality,
+            page=page,
+            limit=limit,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "database unavailable", "reason": str(exc)},
+        ) from exc
 
 
 @router.get("/{slug}")
 async def get_model_by_slug(slug: str) -> dict[str, Any]:
-    detail = await _get_model_detail_with_fallback(slug)
+    try:
+        detail = await _get_model_detail(slug)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "database unavailable", "reason": str(exc)},
+        ) from exc
+
     if not detail:
         return JSONResponse(status_code=404, content={"error": "Model not found", "slug": slug})
     return detail
@@ -110,7 +106,14 @@ async def get_model_by_slug(slug: str) -> dict[str, Any]:
 
 @router.get("/{slug}/status")
 async def get_model_status(slug: str) -> dict[str, Any]:
-    detail = await _get_model_detail_with_fallback(slug)
+    try:
+        detail = await _get_model_detail(slug)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "database unavailable", "reason": str(exc)},
+        ) from exc
+
     if not detail:
         return JSONResponse(status_code=404, content={"error": "Model not found", "slug": slug})
 

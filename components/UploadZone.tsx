@@ -5,7 +5,6 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 interface UploadZoneProps {
   onFileSelected: (file: File) => void;
   isDisabled: boolean;
-  currentFile: File | null;
 }
 
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
@@ -16,29 +15,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function UploadZone({ onFileSelected, isDisabled, currentFile }: UploadZoneProps) {
+export function UploadZone({ onFileSelected, isDisabled }: UploadZoneProps) {
   const [isDragging, setIsDragging]         = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [thumbnailUrl, setThumbnailUrl]      = useState<string | null>(null);
+  const [selectedFile, setSelectedFile]      = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  // Revoke previous object URL to prevent memory leaks
-  useEffect(() => {
-    if (!currentFile) {
-      setThumbnailUrl(prev => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-    }
-  }, [currentFile]);
+  const thumbnailRef = useRef<string | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      setThumbnailUrl(prev => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
+      if (thumbnailRef.current) {
+        URL.revokeObjectURL(thumbnailRef.current);
+      }
     };
   }, []);
 
@@ -49,11 +39,15 @@ export function UploadZone({ onFileSelected, isDisabled, currentFile }: UploadZo
         return;
       }
       setValidationError(null);
-      // Revoke old URL before creating a new one
-      setThumbnailUrl(prev => {
-        if (prev) URL.revokeObjectURL(prev);
-        return URL.createObjectURL(file);
-      });
+      setSelectedFile(file);
+
+      if (thumbnailRef.current) {
+        URL.revokeObjectURL(thumbnailRef.current);
+      }
+
+      const nextUrl = URL.createObjectURL(file);
+      thumbnailRef.current = nextUrl;
+      setThumbnailUrl(nextUrl);
       onFileSelected(file);
     },
     [onFileSelected],
@@ -112,7 +106,7 @@ export function UploadZone({ onFileSelected, isDisabled, currentFile }: UploadZo
       role="button"
       tabIndex={isDisabled ? -1 : 0}
       aria-disabled={isDisabled}
-      aria-label={currentFile ? `Selected file: ${currentFile.name}. Click to change.` : 'Upload X-ray image'}
+  aria-label={selectedFile ? `Selected file: ${selectedFile.name}. Click to change.` : 'Upload X-ray image'}
       onClick={handleClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') handleClick();
@@ -131,7 +125,7 @@ export function UploadZone({ onFileSelected, isDisabled, currentFile }: UploadZo
         border: `1.5px dashed ${borderColor}`,
         background: bg,
         opacity: isDisabled ? 0.4 : 1,
-        cursor: isDisabled ? 'not-allowed' : currentFile ? 'default' : 'pointer',
+  cursor: isDisabled ? 'not-allowed' : selectedFile ? 'default' : 'pointer',
         pointerEvents: isDisabled ? 'none' : 'auto',
         transition: 'all var(--transition-fast, 150ms ease)',
         textAlign: 'center',
@@ -178,7 +172,7 @@ export function UploadZone({ onFileSelected, isDisabled, currentFile }: UploadZo
             Release to upload
           </span>
         </>
-      ) : currentFile ? (
+  ) : selectedFile ? (
         /* ── FILE SELECTED STATE ── */
         <>
           {thumbnailUrl && (
@@ -206,13 +200,13 @@ export function UploadZone({ onFileSelected, isDisabled, currentFile }: UploadZo
                 maxWidth: '220px',
               }}
             >
-              {currentFile.name}
+              {selectedFile.name}
             </span>
             <span
               className="mono"
               style={{ fontSize: '11px', color: 'var(--text-secondary)' }}
             >
-              {formatBytes(currentFile.size)}
+              {formatBytes(selectedFile.size)}
             </span>
           </div>
 

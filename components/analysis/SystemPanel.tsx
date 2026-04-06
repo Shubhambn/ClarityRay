@@ -75,7 +75,7 @@ function ProbabilityBars({
       </div>
       <div className="panel-sm">
         <p className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-          Raw per-class probabilities are not available in current result payload.
+          Raw per-class probabilities are not available in current result payload ({modelInfo.outputClasses.length} classes).
         </p>
       </div>
     </div>

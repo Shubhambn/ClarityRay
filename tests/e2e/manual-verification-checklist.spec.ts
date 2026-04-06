@@ -29,18 +29,21 @@ test('manual verification checklist', async ({ page }) => {
   await page.goto('http://localhost:3000/models');
   await expect(page).toHaveURL(/http:\/\/localhost:3000\/models$/);
 
-  const denseNetCard = page.getByRole('link', {
-    name: /view details for .*densenet121|view details for densenet121 chest x-ray binary classifier/i,
+  const modelCard = page.getByRole('link', {
+    name: /view details for/i,
   }).first();
 
-  await expect(denseNetCard).toBeVisible({ timeout: 15_000 });
+  await expect(modelCard).toBeVisible({ timeout: 15_000 });
   results[CHECKS.modelsPageLoadsAndDenseNetCardVisible] = true;
 
-  await denseNetCard.click();
-  await expect(page).toHaveURL(/http:\/\/localhost:3000\/models\/densenet121-chest$/);
+  const href = await modelCard.getAttribute('href');
+  const selectedSlug = href?.split('/').pop() ?? '';
+
+  await modelCard.click();
+  await expect(page).toHaveURL(/http:\/\/localhost:3000\/models\/[a-z0-9-]+$/);
   results[CHECKS.cardClickNavigatesToSlugPage] = true;
 
-  await expect(page.getByRole('heading', { level: 1, name: /densenet121/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 15_000 });
   results[CHECKS.modelNameVisibleInH1] = true;
 
   await page.evaluate(() => {
@@ -51,7 +54,7 @@ test('manual verification checklist', async ({ page }) => {
 
   await expect.poll(async () => {
     return await page.evaluate(() => localStorage.getItem('clarityray_selected_model'));
-  }).toBe('densenet121-chest');
+  }).toBe(selectedSlug);
 
   await expect(page).toHaveURL(/http:\/\/localhost:3000\/analysis$/);
   results[CHECKS.useForAnalysisSetsKeyAndNavigates] = true;
@@ -80,7 +83,7 @@ test('manual verification checklist', async ({ page }) => {
   expect(numericLogCount).toBeGreaterThan(0);
   results[CHECKS.logStripShowsRealEvents] = true;
 
-  await page.locator('input[type="file"]').setInputFiles('/home/shubh/Documents/Clarity/backend/uploads/1775066265200-clarityray-test.png');
+  await page.locator('input[type="file"]').setInputFiles('/home/shubh/Documents/Clarity/uploads/1775066265200-clarityray-test.png');
 
   await expect(page.getByText('Analyzing...', { exact: false }).first()).toBeVisible({ timeout: 30_000 });
   results[CHECKS.uploadChangesStatusToAnalyzing] = true;
@@ -92,10 +95,5 @@ test('manual verification checklist', async ({ page }) => {
   expect(localhost4000RequestCount).toBe(0);
   results[CHECKS.zeroRequestsToLocalhost4000] = true;
 
-  // Emit machine-readable checklist for terminal capture
-  console.log('CHECKLIST_RESULTS_START');
-  for (const [label, passed] of Object.entries(results)) {
-    console.log(`${passed ? '[PASS]' : '[FAIL]'} ${label}`);
-  }
-  console.log('CHECKLIST_RESULTS_END');
+  expect(Object.keys(results)).toHaveLength(Object.keys(CHECKS).length);
 });

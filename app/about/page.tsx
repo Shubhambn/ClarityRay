@@ -1,5 +1,3 @@
-import Link from 'next/link'
-
 export const metadata = {
   title: 'About ClarityRay',
 }
@@ -39,7 +37,7 @@ export default function AboutPage() {
           <p className="mono" style={{ textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-secondary)' }}>About / System overview</p>
           <h1 style={{ fontSize: 'clamp(1.75rem, 3vw, 2.5rem)', lineHeight: 1.2, fontWeight: 600 }}>About ClarityRay</h1>
           <p style={{ maxWidth: '86ch', color: 'var(--text-secondary)', lineHeight: 1.7, fontSize: '1rem' }}>
-            ClarityRay is a privacy-first browser-native diagnostic assist platform. It runs model inference locally in the user's browser, uses a small, auditable model contract (clarity.json) to describe model behavior, and includes a converter CLI that packages and validates model bundles for distribution.
+            ClarityRay is a privacy-first browser-native diagnostic assist platform. It runs model inference locally in the user&apos;s browser, uses a small, auditable model contract (clarity.json) to describe model behavior, and includes a converter CLI that packages and validates model bundles for distribution.
           </p>
         </section>
 
@@ -59,7 +57,7 @@ export default function AboutPage() {
         <section className="panel">
           <h2 style={{ marginBottom: 8 }}>Privacy model</h2>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
-            Nothing from the patient's scan leaves the device during inference. Images, intermediate tensors, and any personally-identifying data are retained in browser memory and processed locally. What may be downloaded are model artifacts (for example, ONNX binaries and the converter-produced bundle) — these are model files and metadata only, not patient data.
+            Nothing from the patient&apos;s scan leaves the device during inference. Images, intermediate tensors, and any personally-identifying data are retained in browser memory and processed locally. What may be downloaded are model artifacts (for example, ONNX binaries and the converter-produced bundle) — these are model files and metadata only, not patient data.
           </p>
         </section>
 

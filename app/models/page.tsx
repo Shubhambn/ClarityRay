@@ -57,32 +57,6 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: 
   });
 }
 
-async function fetchModelsFromSameOrigin(
-  filters: { bodypart?: string; modality?: string },
-  signal?: AbortSignal
-): Promise<{ models: ModelSummary[] }> {
-  const params = new URLSearchParams();
-  if (filters.bodypart) {
-    params.set('bodypart', filters.bodypart);
-  }
-  if (filters.modality) {
-    params.set('modality', filters.modality);
-  }
-
-  const endpoint = `/models${params.toString() ? `?${params.toString()}` : ''}`;
-  const response = await fetch(endpoint, { method: 'GET', signal });
-  if (!response.ok) {
-    throw new BackendError(`Request failed with status ${response.status}`, response.status, endpoint);
-  }
-
-  const payload: unknown = await response.json();
-  if (typeof payload !== 'object' || payload === null || !Array.isArray((payload as { models?: unknown }).models)) {
-    throw new BackendError('Invalid models response', 500, endpoint);
-  }
-
-  return { models: (payload as { models: ModelSummary[] }).models };
-}
-
 export default function ModelsPage() {
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -106,11 +80,7 @@ export default function ModelsPage() {
     let active = true;
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
-    const controller = new AbortController();
     const timeoutMs = 15_000;
-    const timeoutId = window.setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
 
     async function runLoad(): Promise<void> {
       setIsLoading(true);
@@ -119,10 +89,7 @@ export default function ModelsPage() {
 
       try {
         const filters = toFilters(bodypartFilter, modalityFilter);
-        const response = await Promise.any([
-          withTimeout(fetchModels(filters), timeoutMs, 'Primary models request timed out'),
-          fetchModelsFromSameOrigin(filters, controller.signal),
-        ]);
+        const response = await withTimeout(fetchModels(filters), timeoutMs, 'Models request timed out');
         if (!active || requestId !== requestIdRef.current) {
           return;
         }
@@ -138,7 +105,6 @@ export default function ModelsPage() {
         setModels([]);
         setError(normalizeError(err));
       } finally {
-        window.clearTimeout(timeoutId);
         if (active) {
           setIsLoading(false);
         }
@@ -149,8 +115,6 @@ export default function ModelsPage() {
 
     return () => {
       active = false;
-      controller.abort();
-      window.clearTimeout(timeoutId);
       setIsLoading(false);
     };
   }, [bodypartFilter, modalityFilter, reloadToken]);
