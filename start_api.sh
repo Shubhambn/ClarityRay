@@ -1,4 +1,4 @@
-nano /home/shubh/Documents/Clarity/start_api.sh#!/bin/bash
+#!/bin/bash
 
 echo "🚀 Starting ClarityRay Backend..."
 

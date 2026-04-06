@@ -1,37 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import TopBar from '@/components/nav/TopBar';
 import ModelCard from '@/components/models/ModelCard';
 import {
   BackendError,
-  checkBackendHealth,
   fetchModels,
   type ModelSummary,
-  type ModelsResponse,
 } from '@/lib/api/client';
-
-const DEFAULT_LOCAL_SLUG = 'densenet121-chest';
-const SELECTED_MODEL_KEY = 'clarityray_selected_model';
-
-const LOCAL_FALLBACK_MODEL: ModelSummary = {
-  id: 'densenet121-chest',
-  slug: 'densenet121-chest',
-  name: 'DenseNet121 Chest X-ray Binary Classifier',
-  bodypart: 'chest',
-  modality: 'xray',
-  status: 'local',
-  published_at: null,
-  current_version: {
-    id: 'densenet121-chest@1.0.0',
-    version: '1.0.0',
-    onnx_url: '/models/densenet121-chest/model.onnx',
-    clarity_url: '/models/densenet121-chest/clarity.json',
-    file_size_mb: null,
-    is_current: true,
-  },
-};
 
 const BODYPART_OPTIONS = ['all', 'chest', 'brain', 'bone', 'abdomen', 'spine', 'other'] as const;
 const MODALITY_OPTIONS = ['all', 'xray', 'ct', 'mri', 'ultrasound', 'pathology', 'other'] as const;
@@ -48,6 +24,10 @@ function toFilters(bodypartFilter: string, modalityFilter: string): { bodypart?:
 }
 
 function normalizeError(error: unknown): string {
+  if (error instanceof AggregateError && Array.isArray(error.errors) && error.errors.length > 0) {
+    return normalizeError(error.errors[0]);
+  }
+
   if (error instanceof BackendError) {
     return error.message;
   }
@@ -59,133 +39,121 @@ function normalizeError(error: unknown): string {
   return 'Unknown error while loading models.';
 }
 
-function normalizeModelsForState(models: ModelSummary[]): ModelSummary[] {
-  return models.map((model) => ({
-    ...model,
-    bodypart: model.bodypart == null ? 'other' : model.bodypart,
-    modality: model.modality == null ? 'other' : model.modality,
-    current_version: model.current_version
-      ? {
-          ...model.current_version,
-          is_current: model.current_version.is_current ?? true,
-        }
-      : null,
-  }));
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      })
+      .catch((error: unknown) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
 }
 
-async function fetchModelsWithDeadline(filters: {
-  bodypart?: string;
-  modality?: string;
-}): Promise<ModelsResponse> {
-  return await Promise.race<ModelsResponse>([
-    fetchModels(filters),
-    new Promise<never>((_, reject) => {
-      const timeout = setTimeout(() => {
-        clearTimeout(timeout);
-        reject(new BackendError('Request timed out after 10 seconds', 408, '/models'));
-      }, 10_000);
-    }),
-  ]);
+async function fetchModelsFromSameOrigin(
+  filters: { bodypart?: string; modality?: string },
+  signal?: AbortSignal
+): Promise<{ models: ModelSummary[] }> {
+  const params = new URLSearchParams();
+  if (filters.bodypart) {
+    params.set('bodypart', filters.bodypart);
+  }
+  if (filters.modality) {
+    params.set('modality', filters.modality);
+  }
+
+  const endpoint = `/models${params.toString() ? `?${params.toString()}` : ''}`;
+  const response = await fetch(endpoint, { method: 'GET', signal });
+  if (!response.ok) {
+    throw new BackendError(`Request failed with status ${response.status}`, response.status, endpoint);
+  }
+
+  const payload: unknown = await response.json();
+  if (typeof payload !== 'object' || payload === null || !Array.isArray((payload as { models?: unknown }).models)) {
+    throw new BackendError('Invalid models response', 500, endpoint);
+  }
+
+  return { models: (payload as { models: ModelSummary[] }).models };
 }
 
 export default function ModelsPage() {
-  const router = useRouter();
-
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [backendOnline, setBackendOnline] = useState<boolean>(true);
   const [bodypartFilter, setBodypartFilter] = useState<string>('all');
   const [modalityFilter, setModalityFilter] = useState<string>('all');
+  const [reloadToken, setReloadToken] = useState<number>(0);
+  const requestIdRef = useRef<number>(0);
 
   const hasActiveFilters = useMemo(
     () => isActiveFilter(bodypartFilter) || isActiveFilter(modalityFilter),
     [bodypartFilter, modalityFilter]
   );
 
-  const useLocalFallback = useCallback(() => {
-    setModels([LOCAL_FALLBACK_MODEL]);
-    setError(null);
+  const retryLoad = useCallback(() => {
+    setReloadToken((value) => value + 1);
   }, []);
 
-  const goToLocalAnalysis = useCallback(() => {
-    window.localStorage.setItem(SELECTED_MODEL_KEY, DEFAULT_LOCAL_SLUG);
-    router.push('/analysis');
-  }, [router]);
-
-  const loadModels = useCallback(
-    async (options?: { preserveErrorForOffline?: boolean }) => {
-      const preserveErrorForOffline = options?.preserveErrorForOffline ?? false;
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const filters = toFilters(bodypartFilter, modalityFilter);
-        const response = await fetchModelsWithDeadline(filters);
-        setModels(normalizeModelsForState(response.models));
-        console.log('[models] setModels from loadModels:', response.models);
-      } catch (err: unknown) {
-        const message = normalizeError(err);
-
-        if (!backendOnline && !preserveErrorForOffline) {
-          setModels([LOCAL_FALLBACK_MODEL]);
-          setError(null);
-        } else {
-          setModels([]);
-          setError(message);
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [backendOnline, bodypartFilter, modalityFilter]
-  );
-
   useEffect(() => {
-    let cancelled = false;
+    let active = true;
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+    const controller = new AbortController();
+    const timeoutMs = 15_000;
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
 
-    async function init(): Promise<void> {
+    async function runLoad(): Promise<void> {
       setIsLoading(true);
       setError(null);
-
-      const health = await checkBackendHealth();
-      if (cancelled) return;
-
-      setBackendOnline(health.ok);
-
-      if (!health.ok) {
-        setModels([LOCAL_FALLBACK_MODEL]);
-      }
+      setBackendOnline(true);
 
       try {
         const filters = toFilters(bodypartFilter, modalityFilter);
-        const response = await fetchModelsWithDeadline(filters);
-        if (cancelled) return;
-        setModels(normalizeModelsForState(response.models));
-        console.log('[models] setModels from init:', response.models);
-      } catch (err: unknown) {
-        if (cancelled) return;
-
-        if (!health.ok) {
-          setModels([LOCAL_FALLBACK_MODEL]);
-          setError(null);
-        } else {
-          setModels([]);
-          setError(normalizeError(err));
+        const response = await Promise.any([
+          withTimeout(fetchModels(filters), timeoutMs, 'Primary models request timed out'),
+          fetchModelsFromSameOrigin(filters, controller.signal),
+        ]);
+        if (!active || requestId !== requestIdRef.current) {
+          return;
         }
+
+        setModels(response.models);
+        setError(null);
+      } catch (err: unknown) {
+        if (!active || requestId !== requestIdRef.current) {
+          return;
+        }
+
+        setBackendOnline(false);
+        setModels([]);
+        setError(normalizeError(err));
       } finally {
-        if (!cancelled) {
+        window.clearTimeout(timeoutId);
+        if (active) {
           setIsLoading(false);
         }
       }
     }
 
-    void init();
+    void runLoad();
 
     return () => {
-      cancelled = true;
+      active = false;
+      controller.abort();
+      window.clearTimeout(timeoutId);
+      setIsLoading(false);
     };
-  }, [bodypartFilter, modalityFilter]);
+  }, [bodypartFilter, modalityFilter, reloadToken]);
 
   return (
     <>
@@ -193,7 +161,7 @@ export default function ModelsPage() {
 
       {!backendOnline && (
         <div className="backend-offline-banner" role="status" aria-live="polite">
-          <p className="backend-offline-banner__title">⚠ Backend API is offline — showing local models only</p>
+          <p className="backend-offline-banner__title">⚠ Backend API is offline — remote models unavailable</p>
           <p className="backend-offline-banner__hint mono">Start the API: cd api && uvicorn main:app --reload</p>
         </div>
       )}
@@ -261,11 +229,8 @@ export default function ModelsPage() {
               <h2 className="error-panel__title">Failed to load models</h2>
               <p className="error-panel__message mono">{error}</p>
               <div className="error-panel__actions">
-                <button type="button" className="btn" onClick={() => void loadModels({ preserveErrorForOffline: true })}>
+                <button type="button" className="btn" onClick={retryLoad}>
                   Retry
-                </button>
-                <button type="button" className="btn" onClick={useLocalFallback}>
-                  Use local model
                 </button>
               </div>
             </div>
@@ -278,16 +243,13 @@ export default function ModelsPage() {
               <p className="empty-subtitle">
                 Models appear here after being pushed with the clarity CLI and published.
               </p>
-              <button type="button" className="btn" onClick={goToLocalAnalysis}>
-                Use local model
-              </button>
             </div>
           )}
 
           {!isLoading && !error && models.length > 0 && (
             <div className="models-grid" aria-label="Available models">
               {models.map((model) => (
-                <ModelCard key={model.id || model.slug} model={model} />
+                <ModelCard key={model.id ? model.id : model.slug} model={model} />
               ))}
             </div>
           )}

@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as ort from 'onnxruntime-web'
 
-import { BackendError, fetchModelBySlug } from '@/lib/api/client'
+import { fetchManifest, getCurrentModel } from '@/lib/clarity/manifest'
 import { sha256 } from '@/lib/clarity/hash'
 import { postprocess, type SafeResult } from '@/lib/clarity/postprocess'
 import { preprocessImage } from '@/lib/clarity/preprocess'
 import { runInference, sessionCache as runtimeSessionCache } from '@/lib/clarity/run'
+import { fetchSpec } from '@/lib/clarity/specLoader'
 import { type ClaritySpec, validateSpec } from '@/lib/clarity/types'
 
 export type ClarityRayStatus =
@@ -54,8 +55,6 @@ type HookErrorContext =
 
 const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
 const DEFAULT_MODEL_SLUG = 'densenet121-chest'
-const LOCAL_SPEC_FALLBACK_URL = '/models/densenet121-chest/clarity.json'
-const LOCAL_MODEL_FALLBACK_URL = '/models/densenet121-chest/model.onnx'
 const MODEL_CACHE_NAME = 'clarityray-models'
 
 // Outside the component — persists across re-renders
@@ -126,6 +125,83 @@ async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unk
   }
 }
 
+async function loadModelWithProgress(
+  url: string,
+  spec: ClaritySpec,
+  onProgress: (bytesLoaded: number, bytesTotal: number) => void
+): Promise<ArrayBuffer> {
+  void spec
+
+  const cacheStore = await caches.open(MODEL_CACHE_NAME)
+  const cached = await cacheStore.match(url)
+  if (cached) {
+    const cachedBuffer = await cached.arrayBuffer()
+    onProgress(cachedBuffer.byteLength, cachedBuffer.byteLength)
+    return cachedBuffer
+  }
+
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to download model: HTTP ${response.status}`)
+  }
+
+  const contentLengthHeader = response.headers.get('Content-Length')
+  const bytesTotal = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : 0
+  const reader = response.body?.getReader()
+
+  if (!reader) {
+    const fallbackBuffer = await response.arrayBuffer()
+    onProgress(fallbackBuffer.byteLength, fallbackBuffer.byteLength)
+    await cacheStore.put(
+      url,
+      new Response(fallbackBuffer, {
+        headers: { 'Content-Type': 'application/octet-stream' },
+      })
+    )
+    return fallbackBuffer
+  }
+
+  const chunks: Uint8Array[] = []
+  let bytesLoaded = 0
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    if (!value) {
+      continue
+    }
+
+    chunks.push(value)
+    bytesLoaded += value.byteLength
+    onProgress(bytesLoaded, bytesTotal > 0 ? bytesTotal : bytesLoaded)
+  }
+
+  const merged = new Uint8Array(bytesLoaded)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+
+  const buffer = merged.buffer
+  await cacheStore.put(
+    url,
+    new Response(buffer, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+    })
+  )
+
+  return buffer
+}
+
+async function createInferenceSession(modelBuffer: ArrayBuffer): Promise<ort.InferenceSession> {
+  const modelArray = new Uint8Array(modelBuffer)
+  return ort.InferenceSession.create(modelArray)
+}
+
 function toModelInfo(spec: ClaritySpec): ModelInfo {
   return {
     id: spec.id,
@@ -152,12 +228,6 @@ function makeSystemLog(level: SystemLog['level'], message: string): SystemLog {
   }
 }
 
-function tick(): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, 0)
-  })
-}
-
 export function useClarityRay() {
   const [status, setStatus] = useState<ClarityRayStatus>('idle')
   const [result, setResult] = useState<SafeResult | null>(null)
@@ -168,7 +238,6 @@ export function useClarityRay() {
   const statusRef = useRef<ClarityRayStatus>('idle')
   const specRef = useRef<ClaritySpec | null>(null)
   const modelUrlRef = useRef<string | null>(null)
-  const initializedRef = useRef(false)
 
   useEffect(() => {
     statusRef.current = status
@@ -186,191 +255,101 @@ export function useClarityRay() {
   }, [])
 
   useEffect(() => {
-    if (initializedRef.current) {
-      return
-    }
-    initializedRef.current = true
+    let cancelled = false
 
-    let isCancelled = false
-
-    const initialize = async (): Promise<void> => {
+    const init = async (): Promise<void> => {
       try {
-        const slug = localStorage.getItem(LOCAL_STORAGE_MODEL_KEY) ?? DEFAULT_MODEL_SLUG
-        addLog('info', `Initializing model: ${slug}`)
+        const _tick = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+        const preferredModel = localStorage.getItem(LOCAL_STORAGE_MODEL_KEY) ?? DEFAULT_MODEL_SLUG
+
         setStatus('loading_manifest')
-        setError(null)
-        await tick()
+        addLog('info', 'Fetching model manifest...')
+        await _tick()
+        const manifest = await fetchManifest()
+        const manifestModel = manifest.models[preferredModel]
+          ? manifest.models[preferredModel]
+          : getCurrentModel(manifest)
+        const selectedModelId = manifest.models[preferredModel] ? preferredModel : manifest.current_model
+        addLog('info', `Manifest loaded — model: ${selectedModelId}`)
 
-        let apiClarityUrl: string | null = null
-        let apiOnnxUrl: string | null = null
-
-        try {
-          const detail = await fetchModelBySlug(slug)
-          const currentVersion = detail.current_version
-
-          if (currentVersion?.clarity_url && currentVersion.clarity_url.trim().length > 0) {
-            apiClarityUrl = currentVersion.clarity_url
-          }
-
-          if (currentVersion?.onnx_url && currentVersion.onnx_url.trim().length > 0) {
-            apiOnnxUrl = currentVersion.onnx_url
-          }
-        } catch (err) {
-          if (err instanceof BackendError) {
-            if (err.statusCode === 404) {
-              addLog('warn', `Model '${slug}' not found in platform, trying local spec`)
-            } else {
-              addLog('warn', `API unavailable: ${err.message}, trying local spec`)
-            }
-          } else {
-            addLog('warn', `API unavailable: ${toErrorMessage(err)}, trying local spec`)
-          }
-        }
-
-        if (isCancelled) {
+        if (cancelled) {
           return
         }
 
         setStatus('loading_spec')
-        addLog('info', 'Loading model specification...')
-        await tick()
+        addLog('info', 'Fetching clarity.json spec...')
+        await _tick()
+        const spec = await fetchSpec(manifestModel.spec_url)
+        addLog('info', `Spec validated — input shape: ${spec.input.shape.join('×')}`)
 
-        let specJson: unknown
-
-        if (apiClarityUrl) {
-          try {
-            specJson = await fetchJsonWithTimeout(apiClarityUrl, 15000)
-          } catch {
-            addLog('warn', 'Using local spec — API not available')
-            specJson = await fetchJsonWithTimeout(LOCAL_SPEC_FALLBACK_URL, 15000)
-          }
-        } else {
-          addLog('warn', 'Using local spec — API not available')
-          specJson = await fetchJsonWithTimeout(LOCAL_SPEC_FALLBACK_URL, 15000)
-        }
-
-        const spec = validateSpec(specJson)
-
-        if (isCancelled) {
+        if (cancelled) {
           return
         }
 
-        specRef.current = spec
+        specRef.current = validateSpec(spec)
         setModelInfo(toModelInfo(spec))
-        addLog('info', `Spec loaded: ${spec.id} v${spec.version}`)
-        addLog('info', `Classes: ${spec.output.classes.join(' · ')}`)
-
-        const modelUrl = apiOnnxUrl && apiOnnxUrl.trim().length > 0
-          ? apiOnnxUrl
-          : LOCAL_MODEL_FALLBACK_URL
-        modelUrlRef.current = modelUrl
+        modelUrlRef.current = manifestModel.url
 
         setStatus('downloading_model')
-        addLog('info', 'Checking model cache...')
-        await tick()
-
-        const cacheStore = await caches.open(MODEL_CACHE_NAME)
-        const cacheMatch = await cacheStore.match(modelUrl)
-        let modelBuffer: ArrayBuffer
-
-        if (cacheMatch) {
-          addLog('info', 'Model loaded from cache')
-          modelBuffer = await cacheMatch.arrayBuffer()
-        } else {
-          addLog('info', 'Downloading model... (this may take a moment)')
-
-          const controller = new AbortController()
-          const timeoutId = window.setTimeout(() => controller.abort(), 45000)
-          let modelResponse: Response
-
-          try {
-            modelResponse = await fetch(modelUrl, { signal: controller.signal })
-          } finally {
-            window.clearTimeout(timeoutId)
+        addLog('info', 'Checking local cache for model binary...')
+        await _tick()
+        const modelBuffer = await loadModelWithProgress(
+          manifestModel.url,
+          spec,
+          (bytesLoaded, bytesTotal) => {
+            const denominator = bytesTotal > 0 ? bytesTotal : bytesLoaded
+            const pct = denominator > 0 ? Math.round((bytesLoaded / denominator) * 100) : 0
+            addLog('info', `Downloading model... ${pct}%`)
           }
+        )
 
-          if (!modelResponse.ok) {
-            throw new Error(`Failed to download model: HTTP ${modelResponse.status}`)
-          }
-
-          modelBuffer = await modelResponse.arrayBuffer()
-          await cacheStore.put(
-            modelUrl,
-            new Response(modelBuffer, {
-              headers: { 'Content-Type': 'application/octet-stream' },
-            })
-          )
-
-          addLog('info', `Model downloaded: ${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)}MB`)
-        }
-
-        if (isCancelled) {
+        if (cancelled) {
           return
         }
 
         setStatus('verifying_model')
-        addLog('info', 'Verifying model...')
-        await tick()
+        addLog('info', 'Verifying model integrity...')
+        await _tick()
 
-        const expectedHash = spec.integrity?.sha256
-        if (expectedHash) {
-          const actualHash = await sha256(modelBuffer)
-          if (actualHash !== expectedHash.toLowerCase()) {
-            throw new Error('Model integrity check failed — file may be corrupted')
+        if (spec.integrity?.sha256) {
+          const hash = await sha256(modelBuffer)
+          if (hash !== spec.integrity.sha256) {
+            throw new Error('Integrity check failed: hash mismatch')
           }
-          addLog('success', 'Integrity verified')
+          addLog('success', 'Integrity verified ✓')
         } else {
           addLog('warn', 'No integrity hash in spec — skipping verification')
         }
 
-        let reloadedCacheMatch: Response | undefined
-        try {
-          reloadedCacheMatch = await cacheStore.match(modelUrl)
-        } catch {
-          reloadedCacheMatch = undefined
+        if (cancelled) {
+          return
         }
 
-        const modelBytes = reloadedCacheMatch ? await reloadedCacheMatch.arrayBuffer() : modelBuffer
-        const modelArray = new Uint8Array(modelBytes)
         const sessionKey = getSessionKey(spec)
-
         if (!sessionCache.has(sessionKey)) {
-          const session = await ort.InferenceSession.create(modelArray)
+          const session = await createInferenceSession(modelBuffer)
           sessionCache.set(sessionKey, session)
           runtimeSessionCache.set(spec.id, session)
         }
 
-        if (!isCancelled) {
+        if (!cancelled) {
           setStatus('ready')
           addLog('success', 'System ready — upload a scan to analyze')
         }
       } catch (err) {
-        if (!isCancelled) {
-          const message = err instanceof Error ? err.message : 'Initialization failed'
-          const friendly =
-            message.toLowerCase().includes('timed out') || message.toLowerCase().includes('abort')
-              ? mapFriendlyError('timeout', err)
-              : message.toLowerCase().includes('cache')
-                ? mapFriendlyError('cache', err)
-                : message.toLowerCase().includes('download')
-                  ? mapFriendlyError('network', err)
-                  : message.toLowerCase().includes('integrity')
-                    ? message
-                    : message.toLowerCase().includes('model specification') || message.toLowerCase().includes('invalid')
-                      ? message
-                      : mapFriendlyError('onnx-load', err)
-
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : 'Initialization failed'
           setStatus('error')
-          setError(friendly)
-          addLog('error', friendly)
+          setError(msg)
+          addLog('error', msg)
         }
       }
     }
 
-    void initialize()
+    void init()
 
     return () => {
-      isCancelled = true
+      cancelled = true
     }
   }, [addLog])
 
@@ -388,67 +367,22 @@ export function useClarityRay() {
     setStatus('processing')
     setResult(null)
     setError(null)
-    addLog('info', `Analysis started: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`)
+    addLog('info', `Analysis started: ${file.name}`)
 
     try {
-      const sessionKey = getSessionKey(spec)
-      if (!sessionCache.has(sessionKey)) {
-        const modelUrl = modelUrlRef.current
-        if (!modelUrl) {
-          throw new Error('Model is not initialized')
-        }
-
-        const cacheStore = await caches.open(MODEL_CACHE_NAME)
-        const cached = await cacheStore.match(modelUrl)
-        if (!cached) {
-          throw new Error('Model cache miss')
-        }
-
-        const modelBytes = await cached.arrayBuffer()
-        const modelArray = new Uint8Array(modelBytes)
-        const session = await ort.InferenceSession.create(modelArray)
-        sessionCache.set(sessionKey, session)
-        runtimeSessionCache.set(spec.id, session)
-      }
-
-      addLog('info', 'Preprocessing image...')
       const tensor = await preprocessImage(file, spec)
       addLog('info', 'Image preprocessed')
 
-      addLog('info', 'Running inference...')
-      const startTime = Date.now()
       const rawOutput = await runInference(tensor, spec)
-      const elapsed = Date.now() - startTime
-      addLog('info', `Inference complete in ${elapsed}ms`)
+      addLog('info', 'Inference complete')
 
-      const safeResult = postprocess(rawOutput, spec)
+      const nextResult = postprocess(rawOutput, spec)
 
-      setResult(safeResult)
+      setResult(nextResult)
       setStatus('complete')
-      addLog('success', `Finding: ${safeResult.primaryFinding} (${safeResult.confidencePercent}%)`)
-
-      const tierText = {
-        possible_finding: '⚠ Possible finding detected',
-        low_confidence: '○ Low confidence result',
-        no_finding: '✓ No finding detected',
-      }[safeResult.safetyTier] ?? safeResult.safetyTier
-
-      addLog('info', tierText)
-    } catch (runErr) {
-      const baseMessage = toErrorMessage(runErr)
-
-      let context: HookErrorContext = 'generic'
-      if (baseMessage.toLowerCase().includes('preprocess') || baseMessage.toLowerCase().includes('decode image')) {
-        context = 'preprocess'
-      } else if (baseMessage.toLowerCase().includes('quotaexceedederror')) {
-        context = 'cache'
-      } else if (baseMessage.toLowerCase().includes('failed to fetch') || baseMessage.toLowerCase().includes('network')) {
-        context = 'network'
-      } else {
-        context = 'inference'
-      }
-
-      const message = mapFriendlyError(context, runErr)
+      addLog('success', `Finding: ${nextResult.primaryFinding} (${nextResult.confidencePercent}%)`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Analysis failed'
       setStatus('error')
       setError(message)
       addLog('error', message)

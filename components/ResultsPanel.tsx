@@ -62,19 +62,22 @@ export function ResultsPanel({
           <p className="font-mono-system text-[10px] uppercase tracking-wider text-[var(--muted)]">Inference output</p>
           <ul className="space-y-2">
             {classLabels.map((label, i) => {
-              const p = probabilities[i] ?? 0;
-              const pct = Math.round(p * 100);
+              const p = probabilities[i];
+              const valid = typeof p === 'number' && Number.isFinite(p);
+              const pct = valid ? Math.round(p * 100) : null;
               return (
                 <li key={`${label}-${i}`}>
                   <div className="mb-1 flex justify-between font-mono-system text-[11px] text-zinc-300">
                     <span className="truncate pr-2">{label}</span>
-                    <span className="shrink-0 text-[var(--g)]">{pct}%</span>
+                    <span className="shrink-0 text-[var(--g)]">{pct !== null ? `${pct}%` : 'invalid'}</span>
                   </div>
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/50">
-                    <div
-                      className="h-full rounded-full bg-[var(--clarity-green)] transition-[width] duration-300"
-                      style={{ width: `${pct}%` }}
-                    />
+                    {pct !== null && (
+                      <div
+                        className="h-full rounded-full bg-[var(--clarity-green)] transition-[width] duration-300"
+                        style={{ width: `${pct}%` }}
+                      />
+                    )}
                   </div>
                 </li>
               );
