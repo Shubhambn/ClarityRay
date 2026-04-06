@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clarityray"
+version = "0.1.0"
+description = "ClarityRay model conversion utilities"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.9",
+  "onnx>=1.14",
+  "onnxruntime>=1.16",
+  "jsonschema>=4.0",
+  "httpx>=0.24",
+]
+
+[project.optional-dependencies]
+pytorch = ["torch>=2.0"]
+keras = ["tensorflow>=2.12", "tf2onnx>=1.15"]
+
+[project.scripts]
+clarityray = "clarityray.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["clarityray*"]

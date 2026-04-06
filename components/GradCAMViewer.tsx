@@ -1,11 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import type { HeatmapData } from '@/lib/models/chestXray/heatmap';
+import type { HeatmapData } from '@/lib/clarity/postprocess';
+import { cn } from '@/lib/utils';
 
 interface GradCAMViewerProps {
   imageUrl?: string | null;
   heatmap?: HeatmapData;
+  /** Omit outer card chrome for embedding inside a scan frame. */
+  embedded?: boolean;
+  className?: string;
 }
 
 function clamp01(value: number): number {
@@ -23,7 +27,7 @@ function heatToRgba(value: number): [number, number, number, number] {
   return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255), Math.round(alpha * 255)];
 }
 
-export function GradCAMViewer({ imageUrl, heatmap }: GradCAMViewerProps) {
+export function GradCAMViewer({ imageUrl, heatmap, embedded = false, className }: GradCAMViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hasImage = Boolean(imageUrl);
 
@@ -76,27 +80,42 @@ export function GradCAMViewer({ imageUrl, heatmap }: GradCAMViewerProps) {
     img.src = imageUrl;
   }, [imageUrl, heatmap]);
 
+  const canvasBlock = (
+    <div className="relative flex min-h-[200px] w-full flex-1 items-center justify-center overflow-hidden rounded-lg bg-slate-950/80">
+      {hasImage ? (
+        <canvas ref={canvasRef} className="max-h-[min(70vh,520px)] w-auto max-w-full object-contain" aria-label="X-ray heatmap overlay" />
+      ) : (
+        <div className="flex h-full min-h-[200px] w-full items-center justify-center px-4 text-center text-sm text-slate-500">
+          Upload and run analysis to render the scan and attention overlay.
+        </div>
+      )}
+    </div>
+  );
+
+  const footnote = (
+    <p className="mt-2 text-xs italic text-zinc-500">
+      Attention map is a visualization aid only. It approximates regions the model weighted during analysis and is not a
+      precise localization of disease. Not a diagnostic feature.
+    </p>
+  );
+
+  if (embedded) {
+    return (
+      <div className={cn('flex h-full min-h-0 flex-col', className)}>
+        {canvasBlock}
+        {footnote}
+      </div>
+    );
+  }
+
   return (
-    <div className="card space-y-3">
+    <div className={cn('card space-y-3', className)}>
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Heatmap Overlay</h3>
+        <h3 className="text-lg font-semibold text-white">Heatmap overlay</h3>
         <span className="text-xs text-slate-400">Visual attention map</span>
       </div>
-
-      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl bg-slate-900/60">
-        {hasImage ? (
-          <canvas ref={canvasRef} className="h-full w-full object-contain" aria-label="X-ray heatmap overlay" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-sm text-slate-400">
-            Upload an image to view the heatmap overlay.
-          </div>
-        )}
-      </div>
-
-      <p className="text-xs text-gray-500 italic mt-2">
-        (i) Attention map is a visualization aid only. It approximates regions the model weighted during analysis and
-        is not a precise localization of disease. Not a diagnostic feature.
-      </p>
+      {canvasBlock}
+      {footnote}
     </div>
   );
 }

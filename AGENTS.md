@@ -7,7 +7,7 @@ Medical inference runs entirely client-side using ONNX Runtime Web.
 No patient data ever leaves the user's device.
 
 It is also a model platform: researchers convert trained ONNX models
-using the clarityray-converter pip package and submit them to a model library.
+using the converter package and submit them to a model library.
 
 ## Core Invariant — Never Break This
 
@@ -100,3 +100,133 @@ All user-facing result text must use:
 
 The disclaimer and plain summary text in translateResults() must not be changed
 without also updating the SafeResult interface.
+
+## Threshold Values
+
+Thresholds (possible_finding, low_confidence) live in clarity.json.
+They are NOT hardcoded in postprocess.ts.
+Default values: possible_finding: 0.5, low_confidence: 0.25,"validation_status": "unvalidated"
+These defaults are reasonable but unvalidated.
+Each model's clarity.json should declare its own validated thresholds
+based on testing against real data.
+
+
+## Persona System
+
+  lib/persona/context.tsx       PersonaContext + usePersona() hook
+  Storage key:                  localStorage 'clarityray_persona_v1'
+  Valid values:                 'researcher' | 'doctor' | 'patient' | null
+  null means:                   persona not set, show onboarding prompt
+  
+  Researcher view shows:        raw probabilities, thresholds, technical metadata, full logs
+  Doctor view shows:            clinical framing, confidence, interpretation, probability bars
+  Patient view shows:           plain language only — hide all technical data
+
+  Never show raw probabilities or threshold values to 'patient' persona.
+  Never show definitive diagnosis language to any persona.
+
+
+  ## Active Code (updated)
+
+  app/page.tsx                        landing page
+  app/onboarding/page.tsx             persona setup + consent flow
+  app/about/page.tsx                  system explanation page
+  app/analysis/page.tsx               active analysis page
+  app/models/page.tsx                 model browser
+  app/models/[slug]/page.tsx          model detail + selection
+  app/not-found.tsx                   custom 404
+  app/error.tsx                       error boundary page
+  
+  hooks/useClarityRay.ts              active inference hook
+  lib/persona/context.tsx             persona state — NEW
+  lib/clarity/*                       generic runtime (Phase 3+)
+  
+  components/nav/TopBar.tsx           global navigation — NEW
+  components/analysis/ControlPanel.tsx  left panel — NEW
+  components/analysis/ScanViewer.tsx    center image panel — NEW
+  components/analysis/SystemPanel.tsx   persona-aware result panel — NEW
+  components/analysis/LogPanel.tsx      real system log display — NEW
+  components/models/ModelCard.tsx       model browser card — NEW
+  components/ConsentModal.tsx           consent gate
+  components/UploadZone.tsx             active
+  components/ResultsPanel.tsx           active
+  components/GradCAMViewer.tsx          active
+
+
+  ## Design System
+
+All styling uses CSS custom properties defined in app/globals.css.
+Never hardcode colors, spacing, or font values in component files.
+Use var(--token-name) everywhere.
+
+Key tokens:
+  --bg-base: #000000              page background
+  --accent-primary: #22c55e       green — the only brand color
+  --text-primary: #f9fafb         main text
+  --text-secondary: #9ca3af       secondary text
+  --text-mono: #86efac            monospace text color
+  --border-subtle: rgba(255,255,255,0.06)
+  --border-accent: rgba(34,197,94,0.25)
+  --font-ui: 'DM Sans'            all UI text
+  --font-mono: 'DM Mono'          system logs, metrics, labels, badges
+
+Classes defined in globals.css (use these, do not recreate):
+  .grid-bg       dark grid overlay background
+  .scanlines     fixed scanline overlay (pointer-events: none)
+  .vignette      fixed radial vignette overlay
+  .panel         base panel styling
+  .panel-accent  panel with green accent border
+  .status-dot    6px pulsing green indicator dot
+  .mono          DM Mono text shorthand
+
+Never:
+  Add gradient backgrounds
+  Add box shadows except for focus rings
+  Use white or light backgrounds anywhere
+  Use fonts other than DM Sans and DM Mono
+  Use colors not from the token system
+
+
+  ## Hook Contract — useClarityRay
+
+Required return shape (do not change without updating all consumers):
+
+  status: ClarityRayStatus
+  result: SafeResult | null
+  error: string | null
+  modelInfo: { id, name, version, inputShape, outputClasses, bodypart, modality } | null
+  logs: SystemLog[]
+  runAnalysis: (file: File) => Promise<void>
+  reset: () => void
+
+Status values (exact — do not add or remove):
+  'idle' | 'loading_manifest' | 'loading_spec' | 'downloading_model'
+  | 'verifying_model' | 'ready' | 'processing' | 'complete' | 'error'
+
+Log type:
+  { id: string, timestamp: Date, level: 'info'|'warn'|'error'|'success', message: string }
+
+integrity.sha256 in spec is OPTIONAL.
+If absent: log a warning and continue. Do NOT fail model loading.
+If present: compute SHA-256 and compare. Fail if mismatch.
+
+## Additional Forbidden Patterns (added)
+
+8.  No fake logs or simulated system events in LogPanel
+    → Show only real SystemLog[] entries from the hook
+
+9.  No hardcoded persona-specific text in shared components
+    → Read persona from usePersona() hook and derive text from it
+
+10. No fake animation loops or artificial delays in analysis flow
+    → Map real status values to UI states only
+
+11. Never show raw probabilities or threshold values to 'patient' persona
+    → Gate technical data behind persona === 'researcher' || persona === 'doctor'
+
+12. TopBar must always show the privacy indicator ('Local' badge)
+    → This is a non-negotiable trust signal, not a toggleable feature
+
+13. Consent must be checked on every /analysis mount
+    → Check localStorage 'clarityray_consent_v1' === 'accepted' on every load
+    → If absent: show ConsentModal. If user navigated away and came back: check again.

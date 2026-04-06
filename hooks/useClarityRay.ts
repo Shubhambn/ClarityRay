@@ -1,244 +1,344 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import * as ort from 'onnxruntime-web';
-import type { HeatmapData } from '@/lib/models/chestXray/heatmap';
-import { generateHeatmap } from '@/lib/models/chestXray/heatmap';
-import { modelConfig } from '@/lib/models/chestXray/config';
-import { preprocessImage } from '@/lib/models/chestXray/preprocess';
-import { postprocessOutput, type ClarityRayResult } from '@/lib/models/chestXray/postprocess';
+'use client'
 
-type ClarityRayStatus =
+import { useCallback, useEffect, useRef, useState } from 'react'
+import * as ort from 'onnxruntime-web'
+
+import { fetchManifest, getCurrentModel } from '@/lib/clarity/manifest'
+import { sha256 } from '@/lib/clarity/hash'
+import { postprocess, type SafeResult } from '@/lib/clarity/postprocess'
+import { preprocessImage } from '@/lib/clarity/preprocess'
+import { runInference, sessionCache as runtimeSessionCache } from '@/lib/clarity/run'
+import { fetchSpec } from '@/lib/clarity/specLoader'
+import { type ClaritySpec, validateSpec } from '@/lib/clarity/types'
+
+export type ClarityRayStatus =
   | 'idle'
-  | 'loading_model'
-  | 'preprocessing'
-  | 'running'
+  | 'loading_manifest'
+  | 'loading_spec'
+  | 'downloading_model'
+  | 'verifying_model'
+  | 'ready'
+  | 'processing'
   | 'complete'
-  | 'error';
+  | 'error'
 
-export type AnalysisStatus = ClarityRayStatus;
-
-export type AnalysisState = {
-  status: AnalysisStatus;
-  loading: boolean;
-  error: string | null;
-  result: ClarityRayResult | null;
-  imageUrl: string | null;
-  heatmap: HeatmapData | null;
-};
-
-const SUPPORTED_TYPES = ['image/png', 'image/jpeg', 'image/jpg'];
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-let cachedSession: ort.InferenceSession | null = null;
-
-function loadImageFromFile(file: File): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    if (!SUPPORTED_TYPES.includes(file.type)) {
-      reject(new Error('Unsupported file type. Please use PNG or JPEG.'));
-      return;
-    }
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(img);
-    };
-    img.onerror = () => reject(new Error('We could not read this image. Please try a different PNG or JPEG file.'));
-    img.src = objectUrl;
-  });
+export interface ModelInfo {
+  id: string
+  name: string
+  version: string
+  inputShape: number[]
+  outputClasses: string[]
+  bodypart: string
+  modality: string
+  thresholds?: {
+    possible_finding?: number
+    low_confidence?: number
+    validation_status?: string
+  }
 }
 
-function getUserFriendlyError(err: unknown): string {
-  const message = err instanceof Error ? err.message : 'Unexpected error while running analysis.';
+export interface SystemLog {
+  id: string
+  timestamp: Date
+  level: 'info' | 'warn' | 'error' | 'success'
+  message: string
+}
 
-  if (/WebAssembly/i.test(message)) {
-    return 'Your browser is not supported for local AI analysis. Please use a recent Chrome, Firefox, or Edge version.';
+const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
+const DEFAULT_MODEL_SLUG = 'densenet121-chest'
+const MODEL_CACHE_NAME = 'clarityray-models'
+
+// Outside the component — persists across re-renders
+const sessionCache = new Map<string, ort.InferenceSession>()
+
+function getSessionKey(spec: ClaritySpec): string {
+  return `${spec.id}@${spec.version}`
+}
+
+async function loadModelWithProgress(
+  url: string,
+  spec: ClaritySpec,
+  onProgress: (bytesLoaded: number, bytesTotal: number) => void
+): Promise<ArrayBuffer> {
+  void spec
+
+  const cacheStore = await caches.open(MODEL_CACHE_NAME)
+  const cached = await cacheStore.match(url)
+  if (cached) {
+    const cachedBuffer = await cached.arrayBuffer()
+    onProgress(cachedBuffer.byteLength, cachedBuffer.byteLength)
+    return cachedBuffer
   }
 
-  if (/load the AI model/i.test(message)) {
-    return 'The AI model could not be loaded. Please refresh the page and try again.';
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to download model: HTTP ${response.status}`)
   }
 
-  if (/Invalid image tensor shape/i.test(message)) {
-    return 'The selected image format is not supported for analysis.';
+  const contentLengthHeader = response.headers.get('Content-Length')
+  const bytesTotal = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : 0
+  const reader = response.body?.getReader()
+
+  if (!reader) {
+    const fallbackBuffer = await response.arrayBuffer()
+    onProgress(fallbackBuffer.byteLength, fallbackBuffer.byteLength)
+    await cacheStore.put(
+      url,
+      new Response(fallbackBuffer, {
+        headers: { 'Content-Type': 'application/octet-stream' },
+      })
+    )
+    return fallbackBuffer
   }
 
-  return message;
+  const chunks: Uint8Array[] = []
+  let bytesLoaded = 0
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      break
+    }
+
+    if (!value) {
+      continue
+    }
+
+    chunks.push(value)
+    bytesLoaded += value.byteLength
+    onProgress(bytesLoaded, bytesTotal > 0 ? bytesTotal : bytesLoaded)
+  }
+
+  const merged = new Uint8Array(bytesLoaded)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+
+  const buffer = merged.buffer
+  await cacheStore.put(
+    url,
+    new Response(buffer, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+    })
+  )
+
+  return buffer
+}
+
+async function createInferenceSession(modelBuffer: ArrayBuffer): Promise<ort.InferenceSession> {
+  const modelArray = new Uint8Array(modelBuffer)
+  return ort.InferenceSession.create(modelArray)
+}
+
+function toModelInfo(spec: ClaritySpec): ModelInfo {
+  return {
+    id: spec.id,
+    name: spec.name,
+    version: spec.version,
+    inputShape: spec.input.shape,
+    outputClasses: spec.output.classes,
+    bodypart: spec.bodypart,
+    modality: spec.modality,
+    thresholds: {
+      possible_finding: spec.thresholds.possible_finding,
+      low_confidence: spec.thresholds.low_confidence,
+      validation_status: spec.thresholds.validation_status,
+    },
+  }
+}
+
+function makeSystemLog(level: SystemLog['level'], message: string): SystemLog {
+  return {
+    id: crypto.randomUUID(),
+    timestamp: new Date(),
+    level,
+    message,
+  }
 }
 
 export function useClarityRay() {
-  const imageUrlRef = useRef<string | null>(null);
+  const [status, setStatus] = useState<ClarityRayStatus>('idle')
+  const [result, setResult] = useState<SafeResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null)
+  const [logs, setLogs] = useState<SystemLog[]>([])
 
-  const [state, setState] = useState<AnalysisState>({
-    status: 'idle',
-    loading: false,
-    error: null,
-    result: null,
-    imageUrl: null,
-    heatmap: null
-  });
-
-  const runAnalysis = useCallback(
-    async (file: File) => {
-      if (!file) {
-        setState((prev: AnalysisState) => ({
-          ...prev,
-          status: 'error',
-          loading: false,
-          error: 'Please select an image before running analysis.'
-        }));
-        return null;
-      }
-
-      if (file.size > MAX_FILE_SIZE_BYTES) {
-        setState((prev: AnalysisState) => ({
-          ...prev,
-          status: 'error',
-          loading: false,
-          error: 'File is too large. Please upload an image smaller than 10MB.'
-        }));
-        return null;
-      }
-
-      setState((prev: AnalysisState) => ({
-        ...prev,
-        status: 'idle',
-        loading: true,
-        error: null
-      }));
-
-      try {
-        if (typeof window === 'undefined') {
-          throw new Error('This analysis must run in a browser environment.');
-        }
-
-        if (!('WebAssembly' in window)) {
-          throw new Error('WebAssembly is not supported in this browser.');
-        }
-
-        let session = cachedSession;
-
-        if (!session) {
-          setState((prev: AnalysisState) => ({ ...prev, status: 'loading_model' }));
-          try {
-            session = await ort.InferenceSession.create(modelConfig.modelPath, {
-              executionProviders: ['wasm']
-            });
-            cachedSession = session;
-          } catch {
-            const message = 'We could not load the AI model in your browser. Please refresh and try again.';
-            setState((prev: AnalysisState) => ({
-              ...prev,
-              status: 'error',
-              loading: false,
-              error: message
-            }));
-            return null;
-          }
-        }
-
-        setState((prev: AnalysisState) => ({ ...prev, status: 'preprocessing' }));
-
-        await new Promise<void>((resolve) => {
-          window.requestAnimationFrame(() => resolve());
-        });
-
-        const image = await loadImageFromFile(file);
-        const input = preprocessImage(image);
-
-        setState((prev: AnalysisState) => ({ ...prev, status: 'running' }));
-
-        const [width, height] = modelConfig.inputSize;
-        const expectedLength = 1 * 3 * width * height;
-
-        if (input.length !== expectedLength) {
-          throw new Error('Invalid image tensor shape. Expected [1, 3, 224, 224].');
-        }
-
-        const inputName = session.inputNames[0];
-        const outputName = session.outputNames[0];
-
-        if (!inputName) {
-          throw new Error('Model input name not found.');
-        }
-
-        if (!outputName) {
-          throw new Error('Model output name not found.');
-        }
-
-        const inputTensor = new ort.Tensor('float32', input, [1, 3, height, width]);
-        const outputs = await session.run({ [inputName]: inputTensor });
-        const outputTensor = outputs[outputName] ?? outputs[Object.keys(outputs)[0]];
-
-        if (!outputTensor?.data) {
-          throw new Error('Model produced no output.');
-        }
-
-        const output =
-          outputTensor.data instanceof Float32Array
-            ? outputTensor.data
-            : Float32Array.from(outputTensor.data as ArrayLike<number>);
-
-        const result = postprocessOutput(output);
-
-        if (!result || result.findings.length === 0) {
-          throw new Error('Analysis completed, but we could not interpret the output. Please try again.');
-        }
-
-        const imageUrl = URL.createObjectURL(file);
-        const abnormalConfidence = result.findings.find((finding) => finding.label === 'Lung Cancer')?.confidence ?? 0;
-        const heatmap = generateHeatmap(image, abnormalConfidence);
-
-        if (imageUrlRef.current) {
-          URL.revokeObjectURL(imageUrlRef.current);
-        }
-        imageUrlRef.current = imageUrl;
-
-        setState({ status: 'complete', loading: false, error: null, result, imageUrl, heatmap });
-        return result;
-      } catch (err) {
-        const message = getUserFriendlyError(err);
-        setState((prev: AnalysisState) => ({
-          ...prev,
-          status: 'error',
-          loading: false,
-          error: message
-        }));
-        return null;
-      }
-    },
-    []
-  );
-
-  const reset = useCallback(() => {
-    if (imageUrlRef.current) {
-      URL.revokeObjectURL(imageUrlRef.current);
-      imageUrlRef.current = null;
-    }
-
-    setState({
-      status: 'idle',
-      loading: false,
-      error: null,
-      result: null,
-      imageUrl: null,
-      heatmap: null
-    });
-  }, []);
+  const statusRef = useRef<ClarityRayStatus>('idle')
+  const specRef = useRef<ClaritySpec | null>(null)
+  const modelUrlRef = useRef<string | null>(null)
 
   useEffect(() => {
-    return () => {
-      if (imageUrlRef.current) {
-        URL.revokeObjectURL(imageUrlRef.current);
-        imageUrlRef.current = null;
+    statusRef.current = status
+  }, [status])
+
+  const addLog = useCallback((level: SystemLog['level'], message: string): void => {
+    try {
+      setLogs((previous) => {
+        const next = [...previous, makeSystemLog(level, message)]
+        return next.slice(-50)
+      })
+    } catch {
+      // addLog must never throw
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const init = async (): Promise<void> => {
+      try {
+        const _tick = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+        const preferredModel = localStorage.getItem(LOCAL_STORAGE_MODEL_KEY) ?? DEFAULT_MODEL_SLUG
+
+        setStatus('loading_manifest')
+        addLog('info', 'Fetching model manifest...')
+        await _tick()
+        const manifest = await fetchManifest()
+        const manifestModel = manifest.models[preferredModel]
+          ? manifest.models[preferredModel]
+          : getCurrentModel(manifest)
+        const selectedModelId = manifest.models[preferredModel] ? preferredModel : manifest.current_model
+        addLog('info', `Manifest loaded — model: ${selectedModelId}`)
+
+        if (cancelled) {
+          return
+        }
+
+        setStatus('loading_spec')
+        addLog('info', 'Fetching clarity.json spec...')
+        await _tick()
+        const spec = await fetchSpec(manifestModel.spec_url)
+        addLog('info', `Spec validated — input shape: ${spec.input.shape.join('×')}`)
+
+        if (cancelled) {
+          return
+        }
+
+        specRef.current = validateSpec(spec)
+        setModelInfo(toModelInfo(spec))
+        modelUrlRef.current = manifestModel.url
+
+        setStatus('downloading_model')
+        addLog('info', 'Checking local cache for model binary...')
+        await _tick()
+        const modelBuffer = await loadModelWithProgress(
+          manifestModel.url,
+          spec,
+          (bytesLoaded, bytesTotal) => {
+            const denominator = bytesTotal > 0 ? bytesTotal : bytesLoaded
+            const pct = denominator > 0 ? Math.round((bytesLoaded / denominator) * 100) : 0
+            addLog('info', `Downloading model... ${pct}%`)
+          }
+        )
+
+        if (cancelled) {
+          return
+        }
+
+        setStatus('verifying_model')
+        addLog('info', 'Verifying model integrity...')
+        await _tick()
+
+        if (spec.integrity?.sha256) {
+          const hash = await sha256(modelBuffer)
+          if (hash !== spec.integrity.sha256) {
+            throw new Error('Integrity check failed: hash mismatch')
+          }
+          addLog('success', 'Integrity verified ✓')
+        } else {
+          addLog('warn', 'No integrity hash in spec — skipping verification')
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        const sessionKey = getSessionKey(spec)
+        if (!sessionCache.has(sessionKey)) {
+          const session = await createInferenceSession(modelBuffer)
+          sessionCache.set(sessionKey, session)
+          runtimeSessionCache.set(spec.id, session)
+        }
+
+        if (!cancelled) {
+          setStatus('ready')
+          addLog('success', 'System ready — upload a scan to analyze')
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : 'Initialization failed'
+          setStatus('error')
+          setError(msg)
+          addLog('error', msg)
+        }
       }
-    };
-  }, []);
+    }
+
+    void init()
+
+    return () => {
+      cancelled = true
+    }
+  }, [addLog])
+
+  const runAnalysis = useCallback(async (file: File): Promise<void> => {
+    if (statusRef.current !== 'ready') {
+      return
+    }
+
+    const spec = specRef.current
+    if (!spec || !modelInfo) {
+      addLog('error', 'Model spec not loaded — cannot analyze')
+      return
+    }
+
+    setStatus('processing')
+    setResult(null)
+    setError(null)
+    addLog('info', `Analysis started: ${file.name}`)
+
+    try {
+      const tensor = await preprocessImage(file, spec)
+      addLog('info', 'Image preprocessed')
+
+      const rawOutput = await runInference(tensor, spec)
+      addLog('info', 'Inference complete')
+
+      const nextResult = postprocess(rawOutput, spec)
+
+      setResult(nextResult)
+      setStatus('complete')
+      addLog('success', `Finding: ${nextResult.primaryFinding} (${nextResult.confidencePercent}%)`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Analysis failed'
+      setStatus('error')
+      setError(message)
+      addLog('error', message)
+    }
+  }, [addLog, modelInfo])
+
+  const reset = useCallback((): void => {
+    setResult(null)
+    setError(null)
+
+    const spec = specRef.current
+    if (spec && sessionCache.has(getSessionKey(spec))) {
+      setStatus('ready')
+      return
+    }
+
+    setStatus('idle')
+  }, [])
 
   return {
-    ...state,
-    findings: state.result?.findings ?? [],
-    heatmapCanvas: state.heatmap,
-    disclaimer: state.result?.disclaimer ?? null,
+    status,
+    result,
+    error,
+    modelInfo,
+    logs,
     runAnalysis,
-    reset
-  };
+    reset,
+  }
 }
