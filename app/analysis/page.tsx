@@ -86,7 +86,7 @@ export default function AnalysisPage() {
   const handleConsentAccepted = useCallback(() => {
     setConsentGiven(true);
   }, []);
-
+  
   return (
     <>
       {/* Consent gate — wraps a ConsentModal that checks its own storage key.
