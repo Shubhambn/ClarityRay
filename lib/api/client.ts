@@ -212,28 +212,6 @@ function mapModelsResponse(value: unknown): ModelsResponse {
 }
 
 /**
- * Maps unknown payload into model status response.
- */
-function mapModelStatus(
-  value: unknown,
-  fallbackSlug: string
-): { slug: string; status: string; validation_passed: boolean } {
-  if (!isRecord(value)) {
-    return {
-      slug: fallbackSlug,
-      status: "unknown",
-      validation_passed: false,
-    };
-  }
-
-  return {
-    slug: readString(value.slug, fallbackSlug),
-    status: readString(value.status, "unknown"),
-    validation_passed: readBoolean(value.validation_passed),
-  };
-}
-
-/**
  * Attempts to parse API error payload.
  */
 async function parseApiError(response: Response): Promise<ApiError | null> {
@@ -378,56 +356,3 @@ export async function fetchModelBySlug(slug: string): Promise<ModelDetail> {
   return mapModelDetail(payload);
 }
 
-/**
- * Fetches model publication and validation status by slug.
- */
-export async function fetchModelStatus(
-  slug: string
-): Promise<{ slug: string; status: string; validation_passed: boolean }> {
-  const normalizedSlug = slug.trim();
-  if (!normalizedSlug) {
-    throw new BackendError("Model slug is required", 400, "/models/:slug/status");
-  }
-
-  const endpoint = `${API_BASE}/models/${encodeURIComponent(normalizedSlug)}/status`;
-  const response = await fetchWithTimeout(endpoint);
-
-  if (!response.ok) {
-    throw await toBackendError(response, endpoint);
-  }
-
-  const payload: unknown = await response.json();
-  return mapModelStatus(payload, normalizedSlug);
-}
-
-/**
- * Checks backend health and model count.
- * Never throws; on any failure returns an offline-safe fallback.
- */
-export async function checkBackendHealth(): Promise<{ ok: boolean; modelsCount: number }> {
-  const endpoint = `${API_BASE}/health`;
-
-  try {
-    const response = await fetchWithTimeout(endpoint);
-    if (!response.ok) {
-      return { ok: false, modelsCount: 0 };
-    }
-
-    const payload: unknown = await response.json();
-    if (!isRecord(payload)) {
-      return { ok: false, modelsCount: 0 };
-    }
-
-    const ok = readBoolean(payload.ok);
-    const modelsCount =
-      typeof payload.modelsCount === "number" && Number.isFinite(payload.modelsCount)
-        ? payload.modelsCount
-        : typeof payload.models_count === "number" && Number.isFinite(payload.models_count)
-          ? payload.models_count
-          : 0;
-
-    return { ok, modelsCount };
-  } catch {
-    return { ok: false, modelsCount: 0 };
-  }
-}

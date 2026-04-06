@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 
-const API_BASE = process.env.CORE_API_BASE_URL;
+const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
 export async function GET(): Promise<NextResponse> {
   if (!API_BASE) {
     return NextResponse.json(
-      { error: 'CORE_API_BASE_URL is not configured' },
+      { error: 'NEXT_PUBLIC_API_URL is not configured' },
       { status: 503 },
     );
   }

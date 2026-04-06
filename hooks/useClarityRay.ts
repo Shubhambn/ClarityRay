@@ -44,15 +44,6 @@ export interface SystemLog {
   message: string
 }
 
-type HookErrorContext =
-  | 'network'
-  | 'timeout'
-  | 'onnx-load'
-  | 'preprocess'
-  | 'inference'
-  | 'cache'
-  | 'generic'
-
 const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
 const DEFAULT_MODEL_SLUG = 'densenet121-chest'
 const MODEL_CACHE_NAME = 'clarityray-models'
@@ -62,67 +53,6 @@ const sessionCache = new Map<string, ort.InferenceSession>()
 
 function getSessionKey(spec: ClaritySpec): string {
   return `${spec.id}@${spec.version}`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message
-  }
-  return 'Unknown error'
-}
-
-function mapFriendlyError(context: HookErrorContext, error: unknown): string {
-  const message = toErrorMessage(error).toLowerCase()
-
-  if (context === 'timeout' || message.includes('timed out') || message.includes('aborterror')) {
-    return 'Download timed out. The model file may be too large or your connection is slow.'
-  }
-
-  if (
-    context === 'network' ||
-    message.includes('failed to fetch') ||
-    message.includes('networkerror') ||
-    message.includes('cannot reach backend api')
-  ) {
-    return 'No internet connection. Check your connection and try again.'
-  }
-
-  if (context === 'cache' || message.includes('quotaexceedederror') || message.includes('storage')) {
-    return 'Storage is full. Clear your browser storage and try again.'
-  }
-
-  if (context === 'onnx-load') {
-    return 'Failed to load the AI model. The model file may be corrupted.'
-  }
-
-  if (context === 'preprocess') {
-    return 'Could not process the image. Make sure it is a valid PNG or JPEG.'
-  }
-
-  if (context === 'inference') {
-    return 'Analysis failed. This may be a temporary issue — try again.'
-  }
-
-  return toErrorMessage(error)
-}
-
-async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
-  const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
-
-  try {
-    const response = await fetch(url, { signal: controller.signal })
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-    return await response.json()
-  } finally {
-    window.clearTimeout(timeoutId)
-  }
 }
 
 async function loadModelWithProgress(
