@@ -4,9 +4,6 @@ import type { SafeResult } from '@/lib/clarity/postprocess';
 import type { ClarityRayStatus } from '@/hooks/useClarityRay';
 import { usePersona, type Persona } from '@/lib/persona/context';
 
-const DEFAULT_THRESHOLD_POSSIBLE = 0.5;
-const DEFAULT_THRESHOLD_LOW_CONF = 0.25;
-
 interface SystemLog {
   id: string;
   timestamp: Date;
@@ -38,25 +35,6 @@ interface SystemPanelProps {
   onReset: () => void;
 }
 
-/**
- * SafeResult does not store per-class probabilities. For the binary screening
- * pipeline, values are reconstructed from confidencePercent + safetyTier to
- * match translateResults() in postprocess.ts.
- */
-function perClassProbabilities(result: SafeResult, classCount: number): number[] {
-  if (classCount === 0) {
-    return [];
-  }
-  if (classCount === 2) {
-    const p = result.confidencePercent / 100;
-    if (result.safetyTier === 'no_finding') {
-      return [p, 1 - p];
-    }
-    return [1 - p, p];
-  }
-  return Array.from({ length: classCount }, () => 1 / classCount);
-}
-
 function PersonaBadge({ persona }: { persona: Persona }) {
   if (persona === 'researcher') {
     return <span className="badge badge-blue">RESEARCHER</span>;
@@ -86,50 +64,20 @@ function loadingMessage(status: ClarityRayStatus): string {
 }
 
 function ProbabilityBars({
-  result,
   modelInfo,
 }: {
-  result: SafeResult;
   modelInfo: ModelInfo;
 }) {
-  const probs = perClassProbabilities(result, modelInfo.outputClasses.length);
-
-  function clampProbability(value: number): number {
-    if (!Number.isFinite(value)) return 0;
-    return Math.min(1, Math.max(0, value));
-  }
-
   return (
     <div>
       <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
         OUTPUT PROBABILITIES
       </div>
-      {modelInfo.outputClasses.map((cls, i) => {
-        const prob = clampProbability(probs[i] ?? 0);
-        return (
-          <div key={cls} style={{ marginBottom: 'var(--space-2)' }}>
-            <div className="row-between">
-              <span
-                className="mono"
-                style={{
-                  minWidth: 0,
-                  flex: 1,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  paddingRight: 'var(--space-2)',
-                }}
-              >
-                {cls}
-              </span>
-              <span className="mono">{Math.round(prob * 100)}%</span>
-            </div>
-            <div className="prob-bar-track">
-              <div className="prob-bar-fill" style={{ width: `${prob * 100}%` }} />
-            </div>
-          </div>
-        );
-      })}
+      <div className="panel-sm">
+        <p className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+          Raw per-class probabilities are not available in current result payload.
+        </p>
+      </div>
     </div>
   );
 }
@@ -140,10 +88,8 @@ export default function SystemPanel(props: SystemPanelProps) {
 
   const { persona } = usePersona();
 
-  const possibleThreshold =
-    modelInfo?.thresholds?.possible_finding ?? DEFAULT_THRESHOLD_POSSIBLE;
-  const lowConfThreshold =
-    modelInfo?.thresholds?.low_confidence ?? DEFAULT_THRESHOLD_LOW_CONF;
+  const possibleThreshold = modelInfo?.thresholds?.possible_finding;
+  const lowConfThreshold = modelInfo?.thresholds?.low_confidence;
 
   const STATUS_TEXT: Record<ClarityRayStatus, string> = {
     idle: 'Awaiting scan',
@@ -339,7 +285,7 @@ export default function SystemPanel(props: SystemPanelProps) {
 
             {persona === 'researcher' && (
               <>
-                {modelInfo !== null && <ProbabilityBars result={result} modelInfo={modelInfo} />}
+                {modelInfo !== null && <ProbabilityBars modelInfo={modelInfo} />}
 
                 <div>
                   <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
@@ -350,13 +296,13 @@ export default function SystemPanel(props: SystemPanelProps) {
                       <span className="mono" style={{ color: 'var(--text-tertiary)' }}>
                         possible_finding
                       </span>
-                      <span className="mono">{possibleThreshold}</span>
+                      <span className="mono">{possibleThreshold ?? 'missing'}</span>
                     </div>
                     <div className="row-between" style={{ marginTop: 'var(--space-2)' }}>
                       <span className="mono" style={{ color: 'var(--text-tertiary)' }}>
                         low_confidence
                       </span>
-                      <span className="mono">{lowConfThreshold}</span>
+                      <span className="mono">{lowConfThreshold ?? 'missing'}</span>
                     </div>
                   </div>
                 </div>
@@ -413,7 +359,7 @@ export default function SystemPanel(props: SystemPanelProps) {
                   <span className="mono">Confidence: {result.confidencePercent}%</span>
                 </div>
 
-                {modelInfo !== null && <ProbabilityBars result={result} modelInfo={modelInfo} />}
+                {modelInfo !== null && <ProbabilityBars modelInfo={modelInfo} />}
 
                 <div>
                   <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
@@ -547,7 +493,7 @@ export default function SystemPanel(props: SystemPanelProps) {
             Analysis Error
           </p>
           <p className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            {error ?? 'An unknown error occurred'}
+            {error !== null ? error : 'Error state set but no error details were provided.'}
           </p>
           <button
             type="button"

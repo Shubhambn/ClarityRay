@@ -7,6 +7,7 @@ import { UploadZone } from '@/components/UploadZone';
 import { LogPanel } from '@/components/analysis/LogPanel';
 import SystemPanel from '@/components/analysis/SystemPanel';
 import { ConsentModal } from '@/components/ConsentModal';
+import TopBar from '@/components/nav/TopBar';
 import { useClarityRay, type ClarityRayStatus } from '@/hooks/useClarityRay';
 import { generateHeatmap, type HeatmapData } from '@/lib/clarity/postprocess';
 import { usePersona } from '@/lib/persona/context';
@@ -15,6 +16,17 @@ import { usePersona } from '@/lib/persona/context';
 
 const CONSENT_KEY = 'clarityray_consent_v1';
 const PERSONA_BANNER_DISMISS_KEY = 'persona_banner_dismissed';
+const INIT_STAGE_ORDER: ClarityRayStatus[] = [
+  'loading_manifest',
+  'loading_spec',
+  'downloading_model',
+  'verifying_model',
+  'ready',
+];
+
+function isInitStage(status: ClarityRayStatus): boolean {
+  return INIT_STAGE_ORDER.includes(status);
+}
 
 function statusText(status: ClarityRayStatus): string {
   switch (status) {
@@ -82,6 +94,7 @@ export default function AnalysisPage() {
   const [consented, setConsented] = useState(false);
   const [personaBannerDismissed, setPersonaBannerDismissed] = useState(false);
   const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
+  const [stageHistory, setStageHistory] = useState<ClarityRayStatus[]>([]);
 
   const isLoadingStatus =
     hook.status === 'loading_manifest' ||
@@ -106,6 +119,26 @@ export default function AnalysisPage() {
       }
     };
   }, [imageURL]);
+
+  useEffect(() => {
+    const current = hook.status;
+
+    if (current === 'idle') {
+      setStageHistory([]);
+      return;
+    }
+
+    if (!isInitStage(current)) {
+      return;
+    }
+
+    setStageHistory((previous) => {
+      if (previous.includes(current)) {
+        return previous;
+      }
+      return [...previous, current];
+    });
+  }, [hook.status]);
 
   useEffect(() => {
     if (!imageURL || hook.status !== 'complete' || hook.result === null) {
@@ -183,9 +216,10 @@ export default function AnalysisPage() {
 
   if (!consented) {
     return (
-      <div style={{ minHeight: 'calc(100vh - 48px)', position: 'relative' }}>
+      <>
+        <TopBar />
         <ConsentModal onAccept={() => setConsented(true)} />
-      </div>
+      </>
     );
   }
 
@@ -322,6 +356,35 @@ export default function AnalysisPage() {
                 {isLoadingStatus && <span className="spinner" aria-hidden="true" />}
               </span>
             </div>
+
+            {stageHistory.length > 0 && (
+              <div
+                className="mono"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '2px',
+                  fontSize: '10px',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {INIT_STAGE_ORDER.filter((stage) => stageHistory.includes(stage)).map((stage) => {
+                  const isCurrent = stage === hook.status;
+                  const marker = isCurrent ? '▶' : '✓';
+
+                  return (
+                    <div
+                      key={stage}
+                      style={{
+                        color: isCurrent ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                      }}
+                    >
+                      {marker} {statusText(stage)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {hook.modelInfo !== null && (
               <>

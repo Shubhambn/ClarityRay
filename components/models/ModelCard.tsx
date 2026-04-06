@@ -6,7 +6,6 @@ import { type ModelSummary } from '@/lib/api/client';
 /* ── Types ── */
 interface ModelCardProps {
   model: ModelSummary;
-  onSelect?: () => void;
 }
 
 function inferSafetyTier(clarityUrl?: string): string {
@@ -30,20 +29,20 @@ function inferSafetyTier(clarityUrl?: string): string {
   return 'SCREENING';
 }
 
-export default function ModelCard({ model, onSelect }: ModelCardProps) {
-  const version = model.current_version?.version ?? null;
+export default function ModelCard({ model }: ModelCardProps) {
+  const version = model.current_version ? model.current_version.version : null;
   const bodypart = model.bodypart.toUpperCase();
   const modality = model.modality.toUpperCase();
   const safetyTier = inferSafetyTier(model.current_version?.clarity_url);
-  const fileSizeMb = model.current_version?.file_size_mb;
+  const fileSizeMb = model.current_version ? model.current_version.file_size_mb : null;
 
   return (
     <>
       <Link
         href={`/models/${model.slug}`}
+        prefetch={false}
         className="model-card-link"
         aria-label={`View details for ${model.name}`}
-        onClick={onSelect}
       >
         <article className="panel model-card">
           <div className="model-card__top">

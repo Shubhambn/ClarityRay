@@ -11,6 +11,31 @@ import {
   type ModelDetail,
 } from '@/lib/api/client';
 
+const DEFAULT_LOCAL_SLUG = 'densenet121-chest';
+
+const LOCAL_FALLBACK_MODEL_DETAIL: ModelDetail = {
+  id: DEFAULT_LOCAL_SLUG,
+  slug: DEFAULT_LOCAL_SLUG,
+  name: 'DenseNet121 Chest X-ray Binary Classifier',
+  bodypart: 'chest',
+  modality: 'xray',
+  status: 'local',
+  published_at: null,
+  current_version: {
+    id: `${DEFAULT_LOCAL_SLUG}@1.0.0`,
+    version: '1.0.0',
+    onnx_url: '/models/densenet121-chest/model.onnx',
+    clarity_url: '/models/densenet121-chest/clarity.json',
+    file_size_mb: null,
+    is_current: true,
+  },
+  validation: {
+    passed: true,
+    ran_at: null,
+    checks: [{ name: 'local_packaged', passed: true, message: 'Packaged with app assets' }],
+  },
+};
+
 function normalizeSlug(value: string | string[] | undefined): string {
   if (typeof value === 'string') {
     return value.trim();
@@ -114,6 +139,14 @@ export default function ModelDetailPage() {
       setModel(null);
       setError('Model slug is required');
       setErrorStatusCode(400);
+      setIsLoading(false);
+      return;
+    }
+
+    if (slug === DEFAULT_LOCAL_SLUG) {
+      setModel(LOCAL_FALLBACK_MODEL_DETAIL);
+      setError(null);
+      setErrorStatusCode(null);
       setIsLoading(false);
       return;
     }
