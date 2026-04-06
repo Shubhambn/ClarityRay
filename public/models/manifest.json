@@ -1,0 +1,11 @@
+{
+  "current_model": "densenet121-chest",
+  "version": "2",
+  "models": {
+    "densenet121-chest": {
+      "version": "2",
+      "url": "/models/densenet121-chest/model.onnx",
+      "spec_url": "/models/densenet121-chest/clarity.json"
+    }
+  }
+}
