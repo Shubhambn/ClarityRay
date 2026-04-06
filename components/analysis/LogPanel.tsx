@@ -7,12 +7,12 @@ interface LogPanelProps {
   logs: SystemLog[];
 }
 
-function levelColor(level: SystemLog['level']): string {
-  if (level === 'error') return '#ef4444';
-  if (level === 'warn') return '#f59e0b';
-  if (level === 'success') return 'var(--text-accent)';
-  return 'var(--text-secondary)';
-}
+const LOG_COLORS: Record<SystemLog['level'], string> = {
+  info: 'var(--text-3)',
+  success: 'var(--text-green)',
+  warn: '#fbbf24',
+  error: 'var(--text-danger)',
+};
 
 function formatLevel(level: SystemLog['level']): string {
   return level.toUpperCase();
@@ -29,15 +29,10 @@ function formatTime(date: Date): string {
 
 export function LogPanel({ logs }: LogPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: 'smooth',
-    });
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs.length]);
   
 
@@ -88,32 +83,28 @@ export function LogPanel({ logs }: LogPanelProps) {
       </div>
 
       {logs.length === 0 ? (
-        <p
-          className="mono"
-          style={{
-            fontSize: '11px',
-            color: 'var(--text-tertiary)',
-          }}
-        >
+        <span className="mono" style={{ fontSize: '11px', color: 'var(--text-3)' }}>
           No events yet.
-        </p>
+        </span>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
           {logs.map((log) => (
-            <p
+            <div
               key={log.id}
               className="mono"
               style={{
                 fontSize: '11px',
-                color: levelColor(log.level),
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
+                color: LOG_COLORS[log.level],
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
               }}
             >
               <span style={{ color: 'var(--text-tertiary)' }}>[{formatTime(log.timestamp)}]</span>{' '}
               {formatLevel(log.level)} {log.message}
-            </p>
+            </div>
           ))}
+          <div ref={endRef} />
         </div>
       )}
     </div>
