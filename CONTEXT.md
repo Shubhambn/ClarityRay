@@ -394,3 +394,5 @@ Files read: 35
 Files not found: 0
 Current phase: Phase 5 — Platform backend + model browser
 Next task: Replace placeholder manifest artifact URLs and align integrity metadata between schema, clarity.json, and runtime loader.
+
+./start_api.sh[execute backend]

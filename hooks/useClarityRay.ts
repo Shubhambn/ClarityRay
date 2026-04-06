@@ -54,7 +54,7 @@ const sessionCache = new Map<string, ort.InferenceSession>();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const DEFAULT_SLUG = 'densenet121-chest';
+const DEFAULT_SLUG = 'chestxray-densenet121-onnx';
 const SELECTED_MODEL_KEY = 'clarityray_selected_model';
 
 function makeLog(
