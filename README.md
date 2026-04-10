@@ -2,16 +2,16 @@
 
 # ClarityRay
 
-**Browser-native chest X-ray screening. No uploads. No servers. No compromise.**
+**Browser-native model-store screening. No uploads. No servers. No compromise.**
 
 `License: MIT` `TypeScript: strict` `ONNX Runtime Web` `Next.js 14` `Python 3.10+`
 
-Browser-based chest X-ray screening with local ONNX inference and safety-first result translation.
+Browser-based Multi-disease screening with local ONNX inference and safety-first result translation.
 Model publishing is spec-driven, so new compliant models can be onboarded without runtime code edits.
 
 </div>
 
-ClarityRay lets a user upload a chest X-ray in the browser and receive a screening-oriented AI result with a heatmap and safety disclaimer. The key decision is architectural: inference runs in ONNX Runtime Web on-device, not on a server. It is built for researchers, clinicians, and patients.
+ClarityRay lets a user upload a imgs-currently,audio and messages in the browser and receive a screening-oriented AI result with a heatmap and safety disclaimer. The key decision is architectural: inference runs in ONNX Runtime Web on-device, not on a server. It is built for researchers, clinicians, and patients.
 
 > Every analysis runs entirely in your browser.  
 > The model runs in WebAssembly. Your scan never leaves your device.  
