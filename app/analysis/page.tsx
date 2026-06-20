@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { GradCAMViewer } from '@/components/GradCAMViewer';
+import { ContrastViewer } from '@/components/ContrastViewer';
 import { UploadZone } from '@/components/UploadZone';
 import { LogPanel } from '@/components/analysis/LogPanel';
 import SystemPanel from '@/components/analysis/SystemPanel';
@@ -559,7 +559,7 @@ export default function AnalysisPage() {
                     zIndex: 15,
                   }}
                 >
-                  <GradCAMViewer embedded imageUrl={imageURL} heatmap={heatmap ?? undefined} className="w-full h-full" />
+                  <ContrastViewer embedded imageUrl={imageURL} heatmap={heatmap ?? undefined} className="w-full h-full" />
                 </div>
               )}
 

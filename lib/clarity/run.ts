@@ -89,4 +89,8 @@ export async function runInference(
   return Float32Array.from(outputData as ArrayLike<number>);
 }
 
+export function hasSession(specId: string): boolean {
+  return sessionCache.has(specId);
+}
+
 export { sessionCache };

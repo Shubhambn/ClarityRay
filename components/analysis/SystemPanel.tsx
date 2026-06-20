@@ -1,30 +1,8 @@
 'use client';
 
 import type { SafeResult } from '@/lib/clarity/postprocess';
-import type { ClarityRayStatus } from '@/hooks/useClarityRay';
+import type { ClarityRayStatus, ModelInfo, SystemLog } from '@/hooks/useClarityRay';
 import { usePersona, type Persona } from '@/lib/persona/context';
-
-interface SystemLog {
-  id: string;
-  timestamp: Date;
-  level: 'info' | 'warn' | 'error' | 'success';
-  message: string;
-}
-
-interface ModelInfo {
-  id: string;
-  name: string;
-  version: string;
-  inputShape: number[];
-  outputClasses: string[];
-  bodypart: string;
-  modality: string;
-  thresholds?: {
-    possible_finding?: number;
-    low_confidence?: number;
-    validation_status?: string;
-  };
-}
 
 interface SystemPanelProps {
   status: ClarityRayStatus;

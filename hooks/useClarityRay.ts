@@ -7,7 +7,7 @@ import { fetchManifest, getCurrentModel } from '@/lib/clarity/manifest'
 import { loadModel } from '@/lib/clarity/loader'
 import { postprocess, type SafeResult } from '@/lib/clarity/postprocess'
 import { preprocessImage } from '@/lib/clarity/preprocess'
-import { runInference, sessionCache as runtimeSessionCache } from '@/lib/clarity/run'
+import { runInference, sessionCache, hasSession } from '@/lib/clarity/run'
 import { fetchSpec } from '@/lib/clarity/specLoader'
 import { type ClaritySpec, validateSpec } from '@/lib/clarity/types'
 
@@ -46,13 +46,6 @@ export interface SystemLog {
 
 const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
 const DEFAULT_MODEL_SLUG = 'densenet121-chest'
-
-// Outside the component — persists across re-renders
-const sessionCache = new Map<string, ort.InferenceSession>()
-
-function getSessionKey(spec: ClaritySpec): string {
-  return `${spec.id}@${spec.version}`
-}
 
 async function createInferenceSession(modelBuffer: ArrayBuffer): Promise<ort.InferenceSession> {
   const modelArray = new Uint8Array(modelBuffer)
@@ -181,11 +174,9 @@ export function useClarityRay() {
 
         if (cancelled) return
 
-        const sessionKey = getSessionKey(spec)
-        if (!sessionCache.has(sessionKey)) {
+        if (!hasSession(spec.id)) {
           const session = await createInferenceSession(modelBuffer)
-          sessionCache.set(sessionKey, session)
-          runtimeSessionCache.set(spec.id, session)
+          sessionCache.set(spec.id, session)
         }
 
         if (!cancelled) {
@@ -251,7 +242,7 @@ export function useClarityRay() {
     setError(null)
 
     const spec = specRef.current
-    if (spec && sessionCache.has(getSessionKey(spec))) {
+    if (spec && hasSession(spec.id)) {
       setStatus('ready')
       return
     }
