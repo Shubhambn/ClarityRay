@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import TopBar from '@/components/nav/TopBar';
 import ModelCard from '@/components/models/ModelCard';
 import {
   BackendError,
@@ -121,8 +120,6 @@ export default function ModelsPage() {
 
   return (
     <>
-      <TopBar />
-
       {!backendOnline && (
         <div className="backend-offline-banner" role="status" aria-live="polite">
           <p className="backend-offline-banner__title">⚠ Backend API is offline — remote models unavailable</p>

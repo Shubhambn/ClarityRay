@@ -64,17 +64,13 @@ def seed() -> None:
     local_model_url = "/models/densenet121-chest/model.onnx"
     local_spec_url = "/models/densenet121-chest/clarity.json"
 
-    # First clear existing current version
-    supabase.table("model_versions").update({"is_current": False}).eq("model_id", model_id).execute()
-
     supabase.table("model_versions").insert(
         {
             "id": version_id,
             "model_id": model_id,
             "version": spec.get("version", "1.0.0"),
-            "onnx_key": local_model_url,
-            "spec_key": local_spec_url,
-            "is_current": True,
+            "model_url": local_model_url,
+            "clarity_url": local_spec_url,
         }
     ).execute()
 

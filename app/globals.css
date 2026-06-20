@@ -92,6 +92,9 @@
   --text-danger: var(--status-danger);
   --border-green: var(--border-accent);
 
+  /* Layout */
+  --topbar-h: 48px;
+
   /* Transitions */
   --transition-fast: 100ms ease;
   --transition-base: 200ms ease;

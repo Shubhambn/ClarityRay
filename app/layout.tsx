@@ -42,7 +42,7 @@ export default function RootLayout({
         {/* Persona context wraps the entire app */}
         <PersonaProvider>
           <TopBar />
-          <div style={{ paddingTop: '48px' }}>{children}</div>
+          <div style={{ paddingTop: 'var(--topbar-h)' }}>{children}</div>
         </PersonaProvider>
       </body>
     </html>

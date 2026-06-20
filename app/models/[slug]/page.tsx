@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 
-import TopBar from '@/components/nav/TopBar';
 import {
   BackendError,
   fetchModelBySlug,
@@ -191,8 +190,6 @@ export default function ModelDetailPage() {
 
   return (
     <>
-      <TopBar />
-
       <main className="model-detail-page">
         <div className="model-detail-container">
           {isLoading ? (

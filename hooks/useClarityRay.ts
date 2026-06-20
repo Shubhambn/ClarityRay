@@ -164,6 +164,7 @@ export function useClarityRay() {
   const [error, setError] = useState<string | null>(null)
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null)
   const [logs, setLogs] = useState<SystemLog[]>([])
+  const [reinitToken, setReinitToken] = useState(0)
 
   const statusRef = useRef<ClarityRayStatus>('idle')
   const specRef = useRef<ClaritySpec | null>(null)
@@ -281,7 +282,7 @@ export function useClarityRay() {
     return () => {
       cancelled = true
     }
-  }, [addLog])
+  }, [addLog, reinitToken])
 
   const runAnalysis = useCallback(async (file: File): Promise<void> => {
     if (statusRef.current !== 'ready') {
@@ -332,6 +333,12 @@ export function useClarityRay() {
     setStatus('idle')
   }, [])
 
+  const retryInit = useCallback((): void => {
+    setResult(null)
+    setError(null)
+    setReinitToken((t) => t + 1)
+  }, [])
+
   return {
     status,
     result,
@@ -340,5 +347,6 @@ export function useClarityRay() {
     logs,
     runAnalysis,
     reset,
+    retryInit,
   }
 }
