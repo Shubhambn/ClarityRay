@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import * as ort from 'onnxruntime-web'
 
 import { fetchManifest, getCurrentModel } from '@/lib/clarity/manifest'
-import { sha256 } from '@/lib/clarity/hash'
+import { loadModel } from '@/lib/clarity/loader'
 import { postprocess, type SafeResult } from '@/lib/clarity/postprocess'
 import { preprocessImage } from '@/lib/clarity/preprocess'
 import { runInference, sessionCache as runtimeSessionCache } from '@/lib/clarity/run'
@@ -46,85 +46,12 @@ export interface SystemLog {
 
 const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
 const DEFAULT_MODEL_SLUG = 'densenet121-chest'
-const MODEL_CACHE_NAME = 'clarityray-models'
 
 // Outside the component — persists across re-renders
 const sessionCache = new Map<string, ort.InferenceSession>()
 
 function getSessionKey(spec: ClaritySpec): string {
   return `${spec.id}@${spec.version}`
-}
-
-async function loadModelWithProgress(
-  url: string,
-  spec: ClaritySpec,
-  onProgress: (bytesLoaded: number, bytesTotal: number) => void
-): Promise<ArrayBuffer> {
-  void spec
-
-  const cacheStore = await caches.open(MODEL_CACHE_NAME)
-  const cached = await cacheStore.match(url)
-  if (cached) {
-    const cachedBuffer = await cached.arrayBuffer()
-    onProgress(cachedBuffer.byteLength, cachedBuffer.byteLength)
-    return cachedBuffer
-  }
-
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Failed to download model: HTTP ${response.status}`)
-  }
-
-  const contentLengthHeader = response.headers.get('Content-Length')
-  const bytesTotal = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : 0
-  const reader = response.body?.getReader()
-
-  if (!reader) {
-    const fallbackBuffer = await response.arrayBuffer()
-    onProgress(fallbackBuffer.byteLength, fallbackBuffer.byteLength)
-    await cacheStore.put(
-      url,
-      new Response(fallbackBuffer, {
-        headers: { 'Content-Type': 'application/octet-stream' },
-      })
-    )
-    return fallbackBuffer
-  }
-
-  const chunks: Uint8Array[] = []
-  let bytesLoaded = 0
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) {
-      break
-    }
-
-    if (!value) {
-      continue
-    }
-
-    chunks.push(value)
-    bytesLoaded += value.byteLength
-    onProgress(bytesLoaded, bytesTotal > 0 ? bytesTotal : bytesLoaded)
-  }
-
-  const merged = new Uint8Array(bytesLoaded)
-  let offset = 0
-  for (const chunk of chunks) {
-    merged.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-
-  const buffer = merged.buffer
-  await cacheStore.put(
-    url,
-    new Response(buffer, {
-      headers: { 'Content-Type': 'application/octet-stream' },
-    })
-  )
-
-  return buffer
 }
 
 async function createInferenceSession(modelBuffer: ArrayBuffer): Promise<ort.InferenceSession> {
@@ -187,6 +114,7 @@ export function useClarityRay() {
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
 
     const init = async (): Promise<void> => {
       try {
@@ -203,9 +131,7 @@ export function useClarityRay() {
         const selectedModelId = manifest.models[preferredModel] ? preferredModel : manifest.current_model
         addLog('info', `Manifest loaded — model: ${selectedModelId}`)
 
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
 
         setStatus('loading_spec')
         addLog('info', 'Fetching clarity.json spec...')
@@ -213,9 +139,7 @@ export function useClarityRay() {
         const spec = await fetchSpec(manifestModel.spec_url)
         addLog('info', `Spec validated — input shape: ${spec.input.shape.join('×')}`)
 
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
 
         specRef.current = validateSpec(spec)
         setModelInfo(toModelInfo(spec))
@@ -224,37 +148,38 @@ export function useClarityRay() {
         setStatus('downloading_model')
         addLog('info', 'Checking local cache for model binary...')
         await _tick()
-        const modelBuffer = await loadModelWithProgress(
+
+        const { buffer: modelBuffer, integritySkipped } = await loadModel(
           manifestModel.url,
           spec,
-          (bytesLoaded, bytesTotal) => {
-            const denominator = bytesTotal > 0 ? bytesTotal : bytesLoaded
-            const pct = denominator > 0 ? Math.round((bytesLoaded / denominator) * 100) : 0
-            addLog('info', `Downloading model... ${pct}%`)
+          {
+            signal: controller.signal,
+            onProgress: (bytesLoaded, bytesTotal) => {
+              if (cancelled) return
+              if (bytesTotal > 0) {
+                const pct = Math.round((bytesLoaded / bytesTotal) * 100)
+                addLog('info', `Downloading model... ${pct}%`)
+              } else {
+                const mb = (bytesLoaded / (1024 * 1024)).toFixed(1)
+                addLog('info', `Downloading model... ${mb} MB`)
+              }
+            },
           }
         )
 
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
 
         setStatus('verifying_model')
         addLog('info', 'Verifying model integrity...')
         await _tick()
 
-        if (spec.integrity?.sha256) {
-          const hash = await sha256(modelBuffer)
-          if (hash !== spec.integrity.sha256) {
-            throw new Error('Integrity check failed: hash mismatch')
-          }
-          addLog('success', 'Integrity verified ✓')
-        } else {
+        if (integritySkipped) {
           addLog('warn', 'No integrity hash in spec — skipping verification')
+        } else {
+          addLog('success', 'Integrity verified ✓')
         }
 
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
 
         const sessionKey = getSessionKey(spec)
         if (!sessionCache.has(sessionKey)) {
@@ -281,6 +206,7 @@ export function useClarityRay() {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [addLog, reinitToken])
 

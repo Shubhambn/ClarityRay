@@ -63,20 +63,42 @@ function loadingMessage(status: ClarityRayStatus): string {
   }
 }
 
-function ProbabilityBars({
-  modelInfo,
-}: {
-  modelInfo: ModelInfo;
-}) {
+function ProbabilityBars({ result }: { result: SafeResult }) {
   return (
     <div>
       <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
         OUTPUT PROBABILITIES
       </div>
-      <div className="panel-sm">
-        <p className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-          Raw per-class probabilities are not available in current result payload ({modelInfo.outputClasses.length} classes).
-        </p>
+      <div className="panel-sm" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {result.classProbabilities.map(({ label, probability }) => (
+          <div key={label}>
+            <div className="row-between" style={{ marginBottom: '2px' }}>
+              <span className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                {label}
+              </span>
+              <span className="mono" style={{ fontSize: '11px' }}>
+                {(probability * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div
+              style={{
+                height: '4px',
+                background: 'var(--border-default)',
+                borderRadius: '2px',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${(probability * 100).toFixed(2)}%`,
+                  background: 'var(--accent-primary)',
+                  borderRadius: '2px',
+                }}
+              />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -285,7 +307,7 @@ export default function SystemPanel(props: SystemPanelProps) {
 
             {persona === 'researcher' && (
               <>
-                {modelInfo !== null && <ProbabilityBars modelInfo={modelInfo} />}
+                <ProbabilityBars result={result} />
 
                 <div>
                   <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
@@ -359,7 +381,7 @@ export default function SystemPanel(props: SystemPanelProps) {
                   <span className="mono">Confidence: {result.confidencePercent}%</span>
                 </div>
 
-                {modelInfo !== null && <ProbabilityBars modelInfo={modelInfo} />}
+                <ProbabilityBars result={result} />
 
                 <div>
                   <div className="label" style={{ marginBottom: 'var(--space-2)' }}>

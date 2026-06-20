@@ -33,35 +33,42 @@ function parseManifestModelEntry(value: unknown, key: string): ManifestModelEntr
   };
 }
 
+async function tryFetchManifest(url: string): Promise<ManifestSpec | null> {
+  try {
+    const response = await fetch(url, { cache: "no-cache" });
+    if (!response.ok) return null;
+
+    const json: unknown = await response.json();
+    if (!isRecord(json)) return null;
+
+    const current_model = parseNonEmptyString(json.current_model, "current_model");
+    const version = parseNonEmptyString(json.version, "version");
+
+    if (!isRecord(json.models)) return null;
+
+    const models: Record<string, ManifestModelEntry> = {};
+    for (const [key, value] of Object.entries(json.models)) {
+      models[key] = parseManifestModelEntry(value, key);
+    }
+
+    if (!models[current_model]) return null;
+
+    return { current_model, version, models };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchManifest(): Promise<ManifestSpec> {
-  const response = await fetch("/models/manifest.json", { cache: "no-cache" });
+  // Try the dynamic API route first — it syncs with Supabase for newly published models
+  const dynamic = await tryFetchManifest("/api/models/manifest");
+  if (dynamic) return dynamic;
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch manifest: ${response.status} ${response.statusText}`);
-  }
+  // Fall back to the static public file
+  const staticManifest = await tryFetchManifest("/models/manifest.json");
+  if (staticManifest) return staticManifest;
 
-  const json: unknown = await response.json();
-  if (!isRecord(json)) {
-    throw new Error("Invalid model manifest: root must be an object.");
-  }
-
-  const current_model = parseNonEmptyString(json.current_model, "current_model");
-  const version = parseNonEmptyString(json.version, "version");
-
-  if (!isRecord(json.models)) {
-    throw new Error("Invalid model manifest: models must be an object.");
-  }
-
-  const models: Record<string, ManifestModelEntry> = {};
-  for (const [key, value] of Object.entries(json.models)) {
-    models[key] = parseManifestModelEntry(value, key);
-  }
-
-  if (!models[current_model]) {
-    throw new Error(`Invalid model manifest: current_model '${current_model}' is not defined in models.`);
-  }
-
-  return { current_model, version, models };
+  throw new Error("Failed to fetch model manifest from all sources");
 }
 
 export function getCurrentModel(manifest: ManifestSpec): ManifestModelEntry {

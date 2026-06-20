@@ -23,6 +23,7 @@ export interface SafeResult {
   safetyTier: "possible_finding" | "no_finding" | "low_confidence";
   plainSummary: string;
   disclaimer: string;
+  classProbabilities: { label: string; probability: number }[];
 }
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -103,6 +104,11 @@ export function translateResults(
   const posThreshold = thresholds.possible_finding;
   const lowThreshold = thresholds.low_confidence;
 
+  const classProbabilities = classes.map((label, i) => ({
+    label,
+    probability: probabilities[i] ?? 0,
+  }));
+
   if (findingProb >= posThreshold) {
     return {
       primaryFinding: classes[1],
@@ -115,6 +121,7 @@ export function translateResults(
         "⚠ Possible finding detected. This is a screening tool, not a diagnosis. " +
         "Please consult a licensed physician immediately. " +
         "Do not take medical action based on this result alone.",
+      classProbabilities,
     };
   }
 
@@ -129,6 +136,7 @@ export function translateResults(
       disclaimer:
         "ℹ Inconclusive result. Image quality, patient positioning, or model limitations " +
         "may affect accuracy. Consult a physician if you have clinical concerns.",
+      classProbabilities,
     };
   }
 
@@ -142,6 +150,7 @@ export function translateResults(
     disclaimer:
       "ℹ No finding detected. This does not mean the image is clinically normal. " +
       "AI screening tools have limitations. Always consult a physician for clinical evaluation.",
+    classProbabilities,
   };
 }
 

@@ -21,10 +21,33 @@ class RegisterModelRequest(BaseModel):
 
 
 def _build_validation_payload(model: dict[str, Any]) -> dict[str, Any]:
+    version = model.get("current_version") or {}
+    checks = [
+        {
+            "name": "model_published",
+            "passed": model.get("status") == "published",
+            "message": "Model has published status",
+        },
+        {
+            "name": "model_url_present",
+            "passed": bool(version.get("onnx_url")),
+            "message": "Model binary URL (onnx_url) is present",
+        },
+        {
+            "name": "clarity_url_present",
+            "passed": bool(version.get("clarity_url")),
+            "message": "Model specification URL (clarity_url) is present",
+        },
+        {
+            "name": "version_tagged",
+            "passed": bool(version.get("version")),
+            "message": "Model version string is set",
+        },
+    ]
     return {
-        "passed": model.get("status") == "published",
+        "passed": all(c["passed"] for c in checks),
         "ran_at": model.get("published_at"),
-        "checks": [],
+        "checks": checks,
     }
 
 
