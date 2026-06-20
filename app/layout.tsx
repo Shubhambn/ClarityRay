@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { DM_Sans, DM_Mono } from 'next/font/google';
 import { PersonaProvider } from '@/lib/persona/context';
 import TopBar from '@/components/nav/TopBar';
+import { ServiceWorkerRegistrar } from '@/components/ServiceWorkerRegistrar';
 import './globals.css';
 
 /* ── Google Fonts via next/font (self-hosted, COEP-safe) ── */
@@ -44,6 +45,7 @@ export default function RootLayout({
           <TopBar />
           <div style={{ paddingTop: 'var(--topbar-h)' }}>{children}</div>
         </PersonaProvider>
+        <ServiceWorkerRegistrar />
       </body>
     </html>
   );

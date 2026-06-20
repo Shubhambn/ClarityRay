@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 from urllib import error as urllib_error
@@ -11,14 +12,37 @@ from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 load_dotenv()
 
 logger = logging.getLogger("clarityray.api")
 
+# ─── Rate limiting ────────────────────────────────────────────────────────────
+# slowapi uses the client IP as the rate-limit key.
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(title="ClarityRay API", version="1.0.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ─── API-key auth dependency ──────────────────────────────────────────────────
+# Set CLARITY_API_KEY in the environment to enable authentication on write endpoints.
+# When the variable is absent (local dev), the check is bypassed automatically.
+def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> None:
+    configured_key = os.getenv("CLARITY_API_KEY")
+    if not configured_key:
+        return  # Auth disabled — no key configured
+    if not x_api_key or not secrets.compare_digest(x_api_key, configured_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or missing API key"},
+        )
 
 SERVICE_NAME = "clarityray-platform"
 DEFAULT_ALLOWED_ORIGINS = [
@@ -246,7 +270,8 @@ app.add_middleware(
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
+@limiter.limit("60/minute")
+async def health(request: Request) -> dict[str, Any]:
     try:
         models_count = await _count_published_models()
         return {
@@ -261,6 +286,46 @@ async def health() -> dict[str, Any]:
             "service": SERVICE_NAME,
             "error": "database unavailable",
         }
+
+
+@app.get("/manifest")
+@limiter.limit("120/minute")
+async def get_manifest(request: Request) -> dict[str, Any]:
+    """
+    Returns all published models in ManifestSpec format.
+    The Next.js /api/models/manifest route proxies this endpoint so the frontend
+    always gets a live view of the model registry rather than a static JSON file.
+    """
+    try:
+        result = await _get_models_from_db(bodypart=None, modality=None, page=1, limit=50)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "database unavailable", "reason": str(exc)},
+        ) from exc
+
+    models_map: dict[str, dict[str, str]] = {}
+    for model in result.get("models", []):
+        v = model.get("current_version") or {}
+        slug: str | None = model.get("slug")
+        onnx_url: str | None = v.get("onnx_url")
+        clarity_url: str | None = v.get("clarity_url")
+        version: str | None = v.get("version")
+        if slug and onnx_url and clarity_url and version:
+            models_map[slug] = {
+                "version": version,
+                "url": onnx_url,
+                "spec_url": clarity_url,
+            }
+
+    if not models_map:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "No published models found"},
+        )
+
+    current_model = next(iter(models_map))
+    return {"current_model": current_model, "version": "1.0", "models": models_map}
 
 
 from api.routes.models import router as models_router

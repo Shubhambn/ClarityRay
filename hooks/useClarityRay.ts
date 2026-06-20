@@ -1,26 +1,22 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import * as ort from 'onnxruntime-web'
 
 import { fetchManifest, getCurrentModel } from '@/lib/clarity/manifest'
 import { loadModel } from '@/lib/clarity/loader'
 import { postprocess, type SafeResult } from '@/lib/clarity/postprocess'
 import { preprocessImage } from '@/lib/clarity/preprocess'
-import { runInference, sessionCache, hasSession } from '@/lib/clarity/run'
+import { runInference, hasSession, loadModelInWorker } from '@/lib/clarity/run'
+import {
+  transition,
+  canTransition,
+  type ClarityRayStatus,
+  type ClarityRayEvent,
+} from '@/lib/clarity/stateMachine'
 import { fetchSpec } from '@/lib/clarity/specLoader'
 import { type ClaritySpec, validateSpec } from '@/lib/clarity/types'
 
-export type ClarityRayStatus =
-  | 'idle'
-  | 'loading_manifest'
-  | 'loading_spec'
-  | 'downloading_model'
-  | 'verifying_model'
-  | 'ready'
-  | 'processing'
-  | 'complete'
-  | 'error'
+export type { ClarityRayStatus }
 
 export interface ModelInfo {
   id: string
@@ -46,11 +42,6 @@ export interface SystemLog {
 
 const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
 const DEFAULT_MODEL_SLUG = 'densenet121-chest'
-
-async function createInferenceSession(modelBuffer: ArrayBuffer): Promise<ort.InferenceSession> {
-  const modelArray = new Uint8Array(modelBuffer)
-  return ort.InferenceSession.create(modelArray)
-}
 
 function toModelInfo(spec: ClaritySpec): ModelInfo {
   return {
@@ -94,6 +85,11 @@ export function useClarityRay() {
     statusRef.current = status
   }, [status])
 
+  // State machine dispatch — all status transitions go through here
+  const dispatch = useCallback((event: ClarityRayEvent): void => {
+    setStatus((prev) => transition(prev, event))
+  }, [])
+
   const addLog = useCallback((level: SystemLog['level'], message: string): void => {
     try {
       setLogs((previous) => {
@@ -114,7 +110,7 @@ export function useClarityRay() {
         const _tick = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
         const preferredModel = localStorage.getItem(LOCAL_STORAGE_MODEL_KEY) ?? DEFAULT_MODEL_SLUG
 
-        setStatus('loading_manifest')
+        dispatch('INIT')
         addLog('info', 'Fetching model manifest...')
         await _tick()
         const manifest = await fetchManifest()
@@ -125,8 +121,8 @@ export function useClarityRay() {
         addLog('info', `Manifest loaded — model: ${selectedModelId}`)
 
         if (cancelled) return
+        dispatch('MANIFEST_OK')
 
-        setStatus('loading_spec')
         addLog('info', 'Fetching clarity.json spec...')
         await _tick()
         const spec = await fetchSpec(manifestModel.spec_url)
@@ -137,8 +133,8 @@ export function useClarityRay() {
         specRef.current = validateSpec(spec)
         setModelInfo(toModelInfo(spec))
         modelUrlRef.current = manifestModel.url
+        dispatch('SPEC_OK')
 
-        setStatus('downloading_model')
         addLog('info', 'Checking local cache for model binary...')
         await _tick()
 
@@ -161,8 +157,8 @@ export function useClarityRay() {
         )
 
         if (cancelled) return
+        dispatch('DOWNLOAD_OK')
 
-        setStatus('verifying_model')
         addLog('info', 'Verifying model integrity...')
         await _tick()
 
@@ -175,18 +171,17 @@ export function useClarityRay() {
         if (cancelled) return
 
         if (!hasSession(spec.id)) {
-          const session = await createInferenceSession(modelBuffer)
-          sessionCache.set(spec.id, session)
+          await loadModelInWorker(modelBuffer, spec.id)
         }
 
         if (!cancelled) {
-          setStatus('ready')
+          dispatch('VERIFY_OK')
           addLog('success', 'System ready — upload a scan to analyze')
         }
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : 'Initialization failed'
-          setStatus('error')
+          dispatch('FAIL')
           setError(msg)
           addLog('error', msg)
         }
@@ -199,10 +194,10 @@ export function useClarityRay() {
       cancelled = true
       controller.abort()
     }
-  }, [addLog, reinitToken])
+  }, [addLog, dispatch, reinitToken])
 
   const runAnalysis = useCallback(async (file: File): Promise<void> => {
-    if (statusRef.current !== 'ready') {
+    if (!canTransition(statusRef.current, 'ANALYZE')) {
       return
     }
 
@@ -212,7 +207,7 @@ export function useClarityRay() {
       return
     }
 
-    setStatus('processing')
+    dispatch('ANALYZE')
     setResult(null)
     setError(null)
     addLog('info', `Analysis started: ${file.name}`)
@@ -227,15 +222,15 @@ export function useClarityRay() {
       const nextResult = postprocess(rawOutput, spec)
 
       setResult(nextResult)
-      setStatus('complete')
+      dispatch('INFER_OK')
       addLog('success', `Finding: ${nextResult.primaryFinding} (${nextResult.confidencePercent}%)`)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Analysis failed'
-      setStatus('error')
+      dispatch('FAIL')
       setError(message)
       addLog('error', message)
     }
-  }, [addLog, modelInfo])
+  }, [addLog, dispatch, modelInfo])
 
   const reset = useCallback((): void => {
     setResult(null)
@@ -243,18 +238,19 @@ export function useClarityRay() {
 
     const spec = specRef.current
     if (spec && hasSession(spec.id)) {
-      setStatus('ready')
+      dispatch('RESET_READY')
       return
     }
 
-    setStatus('idle')
-  }, [])
+    dispatch('RESET')
+  }, [dispatch])
 
   const retryInit = useCallback((): void => {
     setResult(null)
     setError(null)
+    dispatch('RETRY')
     setReinitToken((t) => t + 1)
-  }, [])
+  }, [dispatch])
 
   return {
     status,

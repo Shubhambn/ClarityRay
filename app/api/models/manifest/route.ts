@@ -7,37 +7,23 @@ import type { ManifestSpec } from '@/lib/clarity/manifest'
 const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? ''
 
 export async function GET() {
+  // Primary: fetch the dedicated /manifest endpoint on the FastAPI backend.
+  // This returns a live view of all published models from Supabase.
   if (API_URL) {
     try {
-      const res = await fetch(`${API_URL}/models?limit=50`, {
+      const res = await fetch(`${API_URL}/manifest`, {
         next: { revalidate: 60 },
       })
       if (res.ok) {
-        const data = await res.json() as {
-          models: Array<{
-            slug: string
-            current_version: {
-              version: string | null
-              onnx_url: string | null
-              clarity_url: string | null
-            } | null
-          }>
-        }
-        const models: ManifestSpec['models'] = {}
-        for (const model of data.models ?? []) {
-          const v = model.current_version
-          if (model.slug && v?.onnx_url && v?.clarity_url && v?.version) {
-            models[model.slug] = {
-              version: v.version,
-              url: v.onnx_url,
-              spec_url: v.clarity_url,
-            }
-          }
-        }
-        if (Object.keys(models).length > 0) {
-          const current_model = Object.keys(models)[0]!
-          const manifest: ManifestSpec = { current_model, version: '1.0', models }
-          return NextResponse.json(manifest, {
+        const data = await res.json() as ManifestSpec
+        // Validate minimal shape before forwarding
+        if (
+          typeof data.current_model === 'string' &&
+          data.current_model.length > 0 &&
+          typeof data.models === 'object' &&
+          data.models[data.current_model]
+        ) {
+          return NextResponse.json(data, {
             headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30' },
           })
         }
@@ -47,7 +33,7 @@ export async function GET() {
     }
   }
 
-  // Static fallback — always present in the repo
+  // Static fallback — always present in the repo for local dev without an API
   try {
     const staticPath = join(process.cwd(), 'public', 'models', 'manifest.json')
     const staticJson = JSON.parse(readFileSync(staticPath, 'utf-8'))

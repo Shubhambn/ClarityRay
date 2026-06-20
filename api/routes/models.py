@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl
 
-from api.main import _build_model_summary, _get_models_from_db, _supabase_is_configured, _supabase_request
+from api.main import (
+    _build_model_summary,
+    _get_models_from_db,
+    _supabase_is_configured,
+    _supabase_request,
+    limiter,
+    verify_api_key,
+)
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -92,7 +99,9 @@ async def _get_model_detail(slug: str) -> dict[str, Any] | None:
 
 
 @router.get("")
+@limiter.limit("100/minute")
 async def get_models(
+    request: Request,
     bodypart: str | None = None,
     modality: str | None = None,
     page: int = Query(default=1, ge=1),
@@ -113,7 +122,8 @@ async def get_models(
 
 
 @router.get("/{slug}")
-async def get_model_by_slug(slug: str) -> dict[str, Any]:
+@limiter.limit("100/minute")
+async def get_model_by_slug(request: Request, slug: str) -> dict[str, Any]:
     try:
         detail = await _get_model_detail(slug)
     except Exception as exc:  # noqa: BLE001
@@ -128,7 +138,8 @@ async def get_model_by_slug(slug: str) -> dict[str, Any]:
 
 
 @router.get("/{slug}/status")
-async def get_model_status(slug: str) -> dict[str, Any]:
+@limiter.limit("100/minute")
+async def get_model_status(request: Request, slug: str) -> dict[str, Any]:
     try:
         detail = await _get_model_detail(slug)
     except Exception as exc:  # noqa: BLE001
@@ -147,8 +158,13 @@ async def get_model_status(slug: str) -> dict[str, Any]:
     }
 
 
-@router.post("/register")
-async def register_model(payload: RegisterModelRequest, response: Response) -> dict[str, Any]:
+@router.post("/register", dependencies=[Depends(verify_api_key)])
+@limiter.limit("10/minute")
+async def register_model(
+    request: Request,
+    payload: RegisterModelRequest,
+    response: Response,
+) -> dict[str, Any]:
     if not _supabase_is_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
