@@ -95,6 +95,21 @@ def _build_validation_spec(onnx_path: Path, classes: list[str]) -> dict[str, Any
     }
 
 
+_DIAGNOSTIC_TERMS = ("cancer", "diagnos", "malignant", "tumor")
+
+
+def _suggest_safe_labels(classes: list[str]) -> None:
+    """Print a non-fatal suggestion when class labels use diagnostic wording."""
+    flagged = [c for c in classes if any(term in c.lower() for term in _DIAGNOSTIC_TERMS)]
+    if flagged:
+        typer.echo(
+            f"SUGGESTION: class label(s) {flagged} use diagnostic wording. "
+            "For a screening demo prefer: "
+            "'No suspicious chest finding,Possible suspicious chest finding'."
+        )
+        typer.echo()
+
+
 def _normalize_choice(value: str, allowed: set[str], label: str) -> str:
     normalized = value.strip().lower()
     if normalized not in allowed:
@@ -168,6 +183,8 @@ def upload_cmd(
             "metadata",
         )
 
+    _suggest_safe_labels(class_list)
+
     try:
         validation_spec = _build_validation_spec(onnx_source, class_list)
         validation_report = validate_onnx(str(onnx_source), validation_spec)
@@ -192,6 +209,9 @@ def upload_cmd(
             ),
             "validation",
         )
+
+    for warning in validation_report.warnings:
+        typer.echo(f"WARNING: {warning}")
 
     model_id = _to_slug(model_path.stem)
     try:

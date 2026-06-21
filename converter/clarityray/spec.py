@@ -62,7 +62,8 @@ def _infer_normalization(input_shape: list[int]) -> dict[str, list[float]]:
     if channels == 3:
         return {"mean": IMAGENET_MEAN, "std": IMAGENET_STD}
     if channels == 1:
-        return {"mean": [0.0], "std": [1.0]}
+        # Maps [0,1] pixels to [-1,1]; matches the CXR screening model family.
+        return {"mean": [0.5], "std": [0.5]}
     return {"mean": [0.0], "std": [1.0]}
 
 

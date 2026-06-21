@@ -18,6 +18,59 @@ _UNSUPPORTED_WEB_OPS = {
     "QLinearMatMul",
 }
 
+# Diagnostic/loaded terms that must not appear in screening class labels.
+_DIAGNOSTIC_TERMS = ("cancer", "diagnos", "malignant", "tumor")
+
+
+def _channels_from_shape(shape: list[Any]) -> int | None:
+    """Channel count for an NCHW shape, or None when not derivable."""
+    if len(shape) >= 3 and isinstance(shape[-3], int):
+        return shape[-3]
+    return None
+
+
+def _collect_safety_warnings(spec: dict) -> list[str]:
+    """Non-fatal guardrail warnings for screening-demo specs."""
+    warnings: list[str] = []
+    if not isinstance(spec, dict):
+        return warnings
+
+    output = spec.get("output", {}) if isinstance(spec.get("output"), dict) else {}
+    classes = output.get("classes", []) if isinstance(output.get("classes"), list) else []
+
+    # Diagnostic wording in class labels
+    for label in classes:
+        lowered = str(label).lower()
+        hit = next((term for term in _DIAGNOSTIC_TERMS if term in lowered), None)
+        if hit:
+            warnings.append(
+                f"Class label '{label}' contains diagnostic wording ('{hit}'). "
+                "Prefer non-diagnostic screening labels such as "
+                "'No suspicious chest finding' / 'Possible suspicious chest finding'."
+            )
+
+    # Binary screening expectation
+    if classes and len(classes) != 2:
+        warnings.append(
+            f"Output has {len(classes)} classes; screening demos are expected to be binary (2)."
+        )
+
+    # mean/std length must match channel count
+    input_spec = spec.get("input", {}) if isinstance(spec.get("input"), dict) else {}
+    shape = input_spec.get("shape") if isinstance(input_spec.get("shape"), list) else None
+    normalize = input_spec.get("normalize") if isinstance(input_spec.get("normalize"), dict) else None
+    if shape and normalize:
+        channels = _channels_from_shape(shape)
+        for field in ("mean", "std"):
+            values = normalize.get(field)
+            if channels is not None and isinstance(values, list) and len(values) != channels:
+                warnings.append(
+                    f"normalize.{field} has {len(values)} value(s) but input has {channels} channel(s); "
+                    "they must match."
+                )
+
+    return warnings
+
 
 @dataclass(slots=True)
 class ValidationReport:
@@ -134,6 +187,9 @@ def validate_onnx(onnx_path: str, spec: dict) -> ValidationReport:
     if not tier or not isinstance(disclaimer, str) or len(disclaimer) <= 20 or certified is not False:
         return _fail(checks, "Safety fields", "Safety fields incomplete or invalid.", warnings)
     _pass(checks, "Safety fields", "Safety metadata is complete and valid.")
+
+    # CHECK 6 — Non-fatal screening guardrails (warnings only)
+    warnings.extend(_collect_safety_warnings(spec))
 
     return ValidationReport(passed=True, checks=checks, warnings=warnings)
 
