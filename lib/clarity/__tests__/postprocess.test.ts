@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { applyActivation, toProbabilities, translateResults, postprocess } from '../postprocess'
+import {
+  applyActivation,
+  toProbabilities,
+  toRawValues,
+  translateResults,
+  interpretMultilabel,
+  interpretMulticlass,
+  interpretRegression,
+  postprocess,
+} from '../postprocess'
 import type { ClaritySpec } from '../types'
 
 function makeSpec(overrides?: Partial<ClaritySpec>): ClaritySpec {
@@ -202,5 +211,265 @@ describe('postprocess', () => {
     const raw = new Float32Array([5, 0]) // after softmax, Normal completely dominates
     const result = postprocess(raw, spec)
     expect(result.safetyTier).toBe('no_finding')
+  })
+
+  it('dispatches binary by default (no task field)', () => {
+    const spec = makeSpec()
+    const result = postprocess(new Float32Array([0.2, 0.8]), spec)
+    // binary path returns today's translateResults shape — no `task` tag
+    expect(result.task).toBeUndefined()
+  })
+})
+
+// ─── toRawValues (regression input path) ───────────────────────────────────────
+
+describe('toRawValues', () => {
+  it('returns raw values outside [0,1] without clamping (activation none)', () => {
+    const spec = makeSpec({
+      output: { task: 'regression', classes: ['Bone age'], activation: 'none' },
+    })
+    const values = toRawValues(new Float32Array([12.5]), spec)
+    expect(values).toEqual([12.5])
+  })
+
+  it('keeps ALL outputs — the bug the binary path had', () => {
+    const spec = makeSpec({
+      output: { task: 'regression', classes: ['CTR', 'Spine angle'], activation: 'none' },
+    })
+    const values = toRawValues(new Float32Array([0.55, 27.3]), spec)
+    expect(values).toHaveLength(2)
+    expect(values[0]).toBeCloseTo(0.55, 5)
+    expect(values[1]).toBeCloseTo(27.3, 3)
+  })
+
+  it('throws when a value is not finite', () => {
+    const spec = makeSpec({
+      output: { task: 'regression', classes: ['x'], activation: 'none' },
+    })
+    expect(() => toRawValues(new Float32Array([NaN]), spec)).toThrow(/not finite/)
+  })
+
+  it('throws on length/class mismatch', () => {
+    const spec = makeSpec({
+      output: { task: 'regression', classes: ['x'], activation: 'none' },
+    })
+    expect(() => toRawValues(new Float32Array([1, 2]), spec)).toThrow(/length mismatch/)
+  })
+})
+
+// ─── interpretMultilabel ───────────────────────────────────────────────────────
+
+describe('interpretMultilabel', () => {
+  function mlSpec(overrides?: Partial<ClaritySpec['output']>): ClaritySpec {
+    return makeSpec({
+      output: {
+        task: 'multilabel',
+        activation: 'sigmoid',
+        classes: ['Atelectasis', 'Cardiomegaly', 'Mass', 'Nodule'],
+        labels: [
+          { name: 'Mass', threshold: 0.5, suspicious: true },
+          { name: 'Nodule', threshold: 0.5, suspicious: true },
+          { name: 'Cardiomegaly', threshold: 0.5, suspicious: true },
+          { name: 'Atelectasis', threshold: 0.5, suspicious: true },
+        ],
+        ...overrides,
+      },
+      thresholds: { low_confidence: 0.2, validation_status: 'unvalidated' },
+    })
+  }
+
+  it('surfaces EVERY label at/over threshold, ranked by probability', () => {
+    const spec = mlSpec()
+    // Mass 0.9, Cardiomegaly 0.7 over; Atelectasis 0.1, Nodule 0.3 under
+    const result = interpretMultilabel([0.1, 0.7, 0.9, 0.3], spec)
+    expect(result.safetyTier).toBe('possible_finding')
+    expect(result.findings?.map((f) => f.label)).toEqual(['Mass', 'Cardiomegaly'])
+    expect(result.primaryFinding).toBe('Mass')
+    expect(result.confidencePercent).toBe(90)
+    expect(result.classProbabilities).toHaveLength(4)
+  })
+
+  it('does not discard the other 17 — full distribution always present', () => {
+    const classes = Array.from({ length: 18 }, (_, i) => `Label${i}`)
+    const spec = makeSpec({
+      output: { task: 'multilabel', activation: 'sigmoid', classes },
+      thresholds: { possible_finding: 0.5, low_confidence: 0.2, validation_status: 'unvalidated' },
+    })
+    const probs = classes.map((_, i) => (i === 4 ? 0.8 : 0.05))
+    const result = interpretMultilabel(probs, spec)
+    expect(result.classProbabilities).toHaveLength(18)
+    expect(result.findings).toHaveLength(1)
+    expect(result.findings?.[0].label).toBe('Label4')
+  })
+
+  it('low_confidence when a suspicious label is between low and its threshold', () => {
+    const spec = mlSpec()
+    const result = interpretMultilabel([0.1, 0.1, 0.35, 0.1], spec) // Mass 0.35 (>=0.2, <0.5)
+    expect(result.safetyTier).toBe('low_confidence')
+    expect(result.primaryFinding).toBe('Low-confidence: Mass')
+  })
+
+  it('no_finding when nothing crosses any threshold', () => {
+    const spec = mlSpec()
+    const result = interpretMultilabel([0.05, 0.05, 0.05, 0.05], spec)
+    expect(result.safetyTier).toBe('no_finding')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('a non-suspicious label crossing threshold does not raise the tier', () => {
+    const spec = mlSpec({
+      classes: ['No Finding', 'Mass'],
+      labels: [
+        { name: 'No Finding', threshold: 0.5, suspicious: false },
+        { name: 'Mass', threshold: 0.5, suspicious: true },
+      ],
+    })
+    const result = interpretMultilabel([0.9, 0.1], spec)
+    expect(result.safetyTier).toBe('no_finding')
+    // still reported in findings (faithful), just not escalated
+    expect(result.findings?.map((f) => f.label)).toEqual(['No Finding'])
+  })
+
+  it('defaults missing label metadata to suspicious + possible_finding threshold', () => {
+    const spec = makeSpec({
+      output: { task: 'multilabel', activation: 'sigmoid', classes: ['A', 'B'] },
+      thresholds: { possible_finding: 0.5, low_confidence: 0.2, validation_status: 'unvalidated' },
+    })
+    const result = interpretMultilabel([0.6, 0.1], spec)
+    expect(result.safetyTier).toBe('possible_finding')
+    expect(result.primaryFinding).toBe('A')
+  })
+})
+
+// ─── interpretMulticlass ───────────────────────────────────────────────────────
+
+describe('interpretMulticlass', () => {
+  function mcSpec(overrides?: Partial<ClaritySpec['output']>): ClaritySpec {
+    return makeSpec({
+      output: {
+        task: 'multiclass',
+        activation: 'softmax',
+        classes: ['Normal', 'Pneumonia', 'Effusion'],
+        labels: [
+          { name: 'Normal', suspicious: false },
+          { name: 'Pneumonia', suspicious: true },
+          { name: 'Effusion', suspicious: true },
+        ],
+        ...overrides,
+      },
+      thresholds: { possible_finding: 0.5, low_confidence: 0.2, validation_status: 'unvalidated' },
+    })
+  }
+
+  it('argmax picks the top class and returns the full distribution', () => {
+    const spec = mcSpec()
+    const result = interpretMulticlass([0.1, 0.7, 0.2], spec)
+    expect(result.primaryFinding).toBe('Pneumonia')
+    expect(result.safetyTier).toBe('possible_finding')
+    expect(result.confidencePercent).toBe(70)
+    expect(result.classProbabilities).toHaveLength(3)
+  })
+
+  it('benign winning class reads as no_finding', () => {
+    const spec = mcSpec()
+    const result = interpretMulticlass([0.8, 0.1, 0.1], spec)
+    expect(result.primaryFinding).toBe('Normal')
+    expect(result.safetyTier).toBe('no_finding')
+    expect(result.findings).toHaveLength(0)
+  })
+
+  it('suspicious top class below threshold reads as low_confidence', () => {
+    const spec = mcSpec()
+    const result = interpretMulticlass([0.35, 0.4, 0.25], spec)
+    expect(result.safetyTier).toBe('low_confidence')
+    expect(result.primaryFinding).toBe('Low-confidence: Pneumonia')
+  })
+})
+
+// ─── interpretRegression ───────────────────────────────────────────────────────
+
+describe('interpretRegression', () => {
+  it('reports the raw value, units and range', () => {
+    const spec = makeSpec({
+      output: {
+        task: 'regression',
+        activation: 'none',
+        classes: ['Cardiothoracic ratio'],
+        units: 'ratio',
+        range: [0, 1],
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+    const result = interpretRegression([0.55], spec)
+    expect(result.value).toBe(0.55)
+    expect(result.units).toBe('ratio')
+    expect(result.range).toEqual([0, 1])
+    expect(result.primaryFinding).toContain('0.55')
+  })
+
+  it('carries multiple outputs through classProbabilities (none discarded)', () => {
+    const spec = makeSpec({
+      output: { task: 'regression', activation: 'none', classes: ['CTR', 'Angle'] },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+    const result = interpretRegression([0.55, 27.3], spec)
+    expect(result.classProbabilities.map((c) => c.label)).toEqual(['CTR', 'Angle'])
+    expect(result.classProbabilities[0].probability).toBeCloseTo(0.55, 5)
+    expect(result.classProbabilities[1].probability).toBeCloseTo(27.3, 5)
+  })
+
+  it('applies severity banding when the value falls in a band', () => {
+    const spec = makeSpec({
+      output: {
+        task: 'regression',
+        activation: 'none',
+        classes: ['CTR'],
+        units: 'ratio',
+        bands: [
+          { max: 0.5, tier: 'no_finding', label: 'Normal' },
+          { min: 0.5, tier: 'possible_finding', label: 'Cardiomegaly range' },
+        ],
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+    const result = interpretRegression([0.6], spec)
+    expect(result.safetyTier).toBe('possible_finding')
+    expect(result.primaryFinding).toBe('Cardiomegaly range')
+  })
+
+  it('defaults to a neutral no_finding tier when no band matches', () => {
+    const spec = makeSpec({
+      output: { task: 'regression', activation: 'none', classes: ['Bone age'], units: 'years' },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+    const result = interpretRegression([12.5], spec)
+    expect(result.safetyTier).toBe('no_finding')
+    expect(result.value).toBe(12.5)
+  })
+})
+
+// ─── postprocess dispatch (end-to-end per task) ────────────────────────────────
+
+describe('postprocess dispatch', () => {
+  it('routes multilabel through the multilabel interpreter', () => {
+    const spec = makeSpec({
+      output: { task: 'multilabel', activation: 'sigmoid', classes: ['A', 'B'] },
+      thresholds: { possible_finding: 0.5, low_confidence: 0.2, validation_status: 'unvalidated' },
+    })
+    // sigmoid(2) ≈ 0.88 for A, sigmoid(-2) ≈ 0.12 for B
+    const result = postprocess(new Float32Array([2, -2]), spec)
+    expect(result.task).toBe('multilabel')
+    expect(result.safetyTier).toBe('possible_finding')
+    expect(result.primaryFinding).toBe('A')
+  })
+
+  it('routes regression through toRawValues (no [0,1] clamp)', () => {
+    const spec = makeSpec({
+      output: { task: 'regression', activation: 'none', classes: ['Bone age'], units: 'years' },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+    const result = postprocess(new Float32Array([12.5]), spec)
+    expect(result.task).toBe('regression')
+    expect(result.value).toBe(12.5)
   })
 })

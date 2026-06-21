@@ -1,6 +1,8 @@
-import type { ClaritySpec } from "./types";
+import type { ClaritySpec, ClarityTask } from "./types";
 
 type InputSource = HTMLImageElement | HTMLCanvasElement;
+
+export type SafetyTier = "possible_finding" | "no_finding" | "low_confidence";
 
 export type HeatmapData = {
   values: Float32Array;
@@ -20,10 +22,23 @@ export type ClarityRayResult = {
 export interface SafeResult {
   primaryFinding: string;
   confidencePercent: number;
-  safetyTier: "possible_finding" | "no_finding" | "low_confidence";
+  safetyTier: SafetyTier;
   plainSummary: string;
   disclaimer: string;
   classProbabilities: { label: string; probability: number }[];
+  /** Which interpreter produced this result. Absent for legacy binary callers. */
+  task?: ClarityTask;
+  /**
+   * multilabel/multiclass: every label reported at/over its threshold, ranked
+   * by probability (highest first).
+   */
+  findings?: { label: string; probability: number; suspicious: boolean }[];
+  /** regression: the raw measured value. */
+  value?: number;
+  /** regression: unit of `value`, mirrored from the spec. */
+  units?: string | null;
+  /** regression: expected [min, max] of `value`, mirrored from the spec. */
+  range?: [number, number] | null;
 }
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -31,6 +46,12 @@ function assert(condition: boolean, message: string): asserts condition {
     throw new Error(message);
   }
 }
+
+// Fallback thresholds for tasks that may legitimately omit them in the spec
+// (only binary requires them). They keep the per-label default sane and the
+// binary path numerically unchanged when the spec supplies its own values.
+const DEFAULT_POSSIBLE_FINDING = 0.5;
+const DEFAULT_LOW_CONFIDENCE = 0.2;
 
 function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
@@ -90,6 +111,32 @@ export function toProbabilities(rawOutput: Float32Array, spec: ClaritySpec): num
   return probabilities;
 }
 
+/**
+ * Regression sibling of {@link toProbabilities}: returns the model's raw values
+ * (after any declared activation) without forcing them into [0, 1]. This is the
+ * faithful path the old binary code lacked — it kept only one output and
+ * discarded the rest. One value per named quantity in `spec.output.classes`.
+ */
+export function toRawValues(rawOutput: Float32Array, spec: ClaritySpec): number[] {
+  assert(rawOutput instanceof Float32Array, "postprocess expected rawOutput to be a Float32Array.");
+
+  const values = Array.from(rawOutput);
+  const classCount = spec.output.classes.length;
+
+  assert(classCount > 0, "spec.output.classes must contain at least one class.");
+  assert(
+    values.length === classCount,
+    `rawOutput length mismatch: got ${values.length}, expected ${classCount} values to match spec.output.classes.`
+  );
+
+  const activated = applyActivation(values, spec.output.activation);
+  activated.forEach((value, index) => {
+    assert(Number.isFinite(value), `Regression output at index ${index} is not finite.`);
+  });
+
+  return activated;
+}
+
 export function translateResults(
   probabilities: number[],
   classes: string[],
@@ -101,8 +148,8 @@ export function translateResults(
   const findingProb = probabilities[1];
   const normalProb = probabilities[0];
 
-  const posThreshold = thresholds.possible_finding;
-  const lowThreshold = thresholds.low_confidence;
+  const posThreshold = thresholds.possible_finding ?? DEFAULT_POSSIBLE_FINDING;
+  const lowThreshold = thresholds.low_confidence ?? DEFAULT_LOW_CONFIDENCE;
 
   const classProbabilities = classes.map((label, i) => ({
     label,
@@ -154,9 +201,302 @@ export function translateResults(
   };
 }
 
+/**
+ * Multilabel: N independent findings, each with its own probability. Reports
+ * every label at/over its threshold, ranked by probability, and derives the
+ * safety tier from the highest-severity hit. No label is ever discarded.
+ */
+export function interpretMultilabel(probabilities: number[], spec: ClaritySpec): SafeResult {
+  const classes = spec.output.classes;
+  assert(
+    probabilities.length === classes.length,
+    `probability/class count mismatch: ${probabilities.length} vs ${classes.length}.`
+  );
+
+  const labelMeta = new Map((spec.output.labels ?? []).map((label) => [label.name, label]));
+  const posThreshold = spec.thresholds.possible_finding ?? DEFAULT_POSSIBLE_FINDING;
+  const lowThreshold = spec.thresholds.low_confidence ?? DEFAULT_LOW_CONFIDENCE;
+
+  const classProbabilities = classes.map((label, i) => ({
+    label,
+    probability: probabilities[i] ?? 0,
+  }));
+
+  const perLabel = classes.map((label, i) => {
+    const meta = labelMeta.get(label);
+    return {
+      label,
+      probability: probabilities[i] ?? 0,
+      threshold: meta?.threshold ?? posThreshold,
+      suspicious: meta?.suspicious ?? true,
+    };
+  });
+
+  // Every label at/over its own threshold, highest probability first.
+  const hits = perLabel
+    .filter((p) => p.probability >= p.threshold)
+    .sort((a, b) => b.probability - a.probability);
+
+  const findings = hits.map((h) => ({
+    label: h.label,
+    probability: h.probability,
+    suspicious: h.suspicious,
+  }));
+
+  const suspiciousHits = hits.filter((h) => h.suspicious);
+
+  if (suspiciousHits.length > 0) {
+    const top = suspiciousHits[0];
+    const others = suspiciousHits.length - 1;
+    return {
+      primaryFinding: top.label,
+      confidencePercent: Math.round(top.probability * 100),
+      safetyTier: "possible_finding",
+      plainSummary:
+        `The AI reported ${suspiciousHits.length} possible finding${suspiciousHits.length === 1 ? "" : "s"}, ` +
+        `most prominently "${top.label}"${others > 0 ? ` (and ${others} other${others === 1 ? "" : "s"})` : ""}. ` +
+        "These results require review by a qualified radiologist or physician.",
+      disclaimer:
+        "⚠ Possible finding(s) detected. This is a screening tool, not a diagnosis. " +
+        "Please consult a licensed physician immediately. " +
+        "Do not take medical action based on this result alone.",
+      classProbabilities,
+      task: "multilabel",
+      findings,
+    };
+  }
+
+  const weakSuspicious = perLabel
+    .filter((p) => p.suspicious && p.probability >= lowThreshold)
+    .sort((a, b) => b.probability - a.probability);
+
+  if (weakSuspicious.length > 0) {
+    const top = weakSuspicious[0];
+    return {
+      primaryFinding: `Low-confidence: ${top.label}`,
+      confidencePercent: Math.round(top.probability * 100),
+      safetyTier: "low_confidence",
+      plainSummary:
+        `The AI detected a weak signal for "${top.label}" that does not meet the threshold for a positive finding. ` +
+        "This result is inconclusive.",
+      disclaimer:
+        "ℹ Inconclusive result. Image quality, patient positioning, or model limitations " +
+        "may affect accuracy. Consult a physician if you have clinical concerns.",
+      classProbabilities,
+      task: "multilabel",
+      findings,
+    };
+  }
+
+  return {
+    primaryFinding: "No finding",
+    confidencePercent: Math.round((classProbabilities.reduce((m, c) => Math.max(m, c.probability), 0)) * 100),
+    safetyTier: "no_finding",
+    plainSummary:
+      "No label reached its reporting threshold. " +
+      "A negative AI result does not rule out disease.",
+    disclaimer:
+      "ℹ No finding detected. This does not mean the image is clinically normal. " +
+      "AI screening tools have limitations. Always consult a physician for clinical evaluation.",
+    classProbabilities,
+    task: "multilabel",
+    findings,
+  };
+}
+
+/**
+ * Multiclass: one label out of N mutually exclusive classes (argmax) plus the
+ * full class distribution. Safety tier follows the winning class — benign
+ * classes (e.g. "Normal", flagged `suspicious: false`) read as no finding.
+ */
+export function interpretMulticlass(probabilities: number[], spec: ClaritySpec): SafeResult {
+  const classes = spec.output.classes;
+  assert(
+    probabilities.length === classes.length,
+    `probability/class count mismatch: ${probabilities.length} vs ${classes.length}.`
+  );
+  assert(probabilities.length >= 1, "interpretMulticlass requires at least one class.");
+
+  const labelMeta = new Map((spec.output.labels ?? []).map((label) => [label.name, label]));
+  const posThreshold = spec.thresholds.possible_finding ?? DEFAULT_POSSIBLE_FINDING;
+  const lowThreshold = spec.thresholds.low_confidence ?? DEFAULT_LOW_CONFIDENCE;
+
+  const classProbabilities = classes.map((label, i) => ({
+    label,
+    probability: probabilities[i] ?? 0,
+  }));
+
+  let topIndex = 0;
+  for (let i = 1; i < probabilities.length; i++) {
+    if ((probabilities[i] ?? 0) > (probabilities[topIndex] ?? 0)) {
+      topIndex = i;
+    }
+  }
+
+  const topLabel = classes[topIndex];
+  const topProb = probabilities[topIndex] ?? 0;
+  const suspicious = labelMeta.get(topLabel)?.suspicious ?? true;
+  const confidencePercent = Math.round(topProb * 100);
+
+  if (!suspicious) {
+    return {
+      primaryFinding: topLabel,
+      confidencePercent,
+      safetyTier: "no_finding",
+      plainSummary:
+        `The AI's most likely class is "${topLabel}", which is not flagged as a finding. ` +
+        "A negative AI result does not rule out disease.",
+      disclaimer:
+        "ℹ No finding detected. This does not mean the image is clinically normal. " +
+        "AI screening tools have limitations. Always consult a physician for clinical evaluation.",
+      classProbabilities,
+      task: "multiclass",
+      findings: [],
+    };
+  }
+
+  const tier: SafetyTier =
+    topProb >= posThreshold ? "possible_finding" : topProb >= lowThreshold ? "low_confidence" : "no_finding";
+
+  const findings =
+    tier === "no_finding" ? [] : [{ label: topLabel, probability: topProb, suspicious: true }];
+
+  if (tier === "possible_finding") {
+    return {
+      primaryFinding: topLabel,
+      confidencePercent,
+      safetyTier: "possible_finding",
+      plainSummary:
+        `The AI's most likely class is "${topLabel}". ` +
+        "This result requires review by a qualified radiologist or physician.",
+      disclaimer:
+        "⚠ Possible finding detected. This is a screening tool, not a diagnosis. " +
+        "Please consult a licensed physician immediately. " +
+        "Do not take medical action based on this result alone.",
+      classProbabilities,
+      task: "multiclass",
+      findings,
+    };
+  }
+
+  if (tier === "low_confidence") {
+    return {
+      primaryFinding: `Low-confidence: ${topLabel}`,
+      confidencePercent,
+      safetyTier: "low_confidence",
+      plainSummary:
+        `The AI's top class "${topLabel}" did not reach the confidence threshold for a positive finding. ` +
+        "This result is inconclusive.",
+      disclaimer:
+        "ℹ Inconclusive result. Image quality, patient positioning, or model limitations " +
+        "may affect accuracy. Consult a physician if you have clinical concerns.",
+      classProbabilities,
+      task: "multiclass",
+      findings,
+    };
+  }
+
+  return {
+    primaryFinding: topLabel,
+    confidencePercent,
+    safetyTier: "no_finding",
+    plainSummary:
+      `The AI's top class "${topLabel}" scored below the reporting threshold. ` +
+      "A negative AI result does not rule out disease.",
+    disclaimer:
+      "ℹ No finding detected. This does not mean the image is clinically normal. " +
+      "AI screening tools have limitations. Always consult a physician for clinical evaluation.",
+    classProbabilities,
+    task: "multiclass",
+    findings,
+  };
+}
+
+/**
+ * Regression: a continuous value (or graded score). Reports the raw value, its
+ * units and expected range, with optional severity banding from the spec. All
+ * outputs are carried through — the old binary path threw extras away.
+ */
+export function interpretRegression(values: number[], spec: ClaritySpec): SafeResult {
+  const classes = spec.output.classes;
+  assert(
+    values.length === classes.length,
+    `value/class count mismatch: ${values.length} vs ${classes.length}.`
+  );
+  assert(values.length >= 1, "interpretRegression requires at least one output.");
+
+  const value = values[0];
+  const units = spec.output.units ?? null;
+  const range = spec.output.range ?? null;
+
+  // Carry every regressed quantity through unchanged (no discarding).
+  const classProbabilities = classes.map((label, i) => ({
+    label,
+    probability: values[i] ?? 0,
+  }));
+
+  const formatted = `${classes[0]}: ${value}${units ? ` ${units}` : ""}`;
+
+  const band = (spec.output.bands ?? []).find(
+    (b) => (b.min === undefined || value >= b.min) && (b.max === undefined || value <= b.max)
+  );
+
+  if (band) {
+    const isFinding = band.tier !== "no_finding";
+    return {
+      primaryFinding: band.label,
+      confidencePercent: 0,
+      safetyTier: band.tier,
+      plainSummary:
+        `The model measured ${formatted}, which falls in the "${band.label}" band. ` +
+        (isFinding
+          ? "This result requires review by a qualified clinician."
+          : "This value is within the expected range."),
+      disclaimer: isFinding
+        ? "⚠ Measured value falls in a flagged band. This is a screening tool, not a diagnosis. " +
+          "Please consult a licensed physician."
+        : "ℹ Measured value reported for clinical context. This is not a diagnosis. " +
+          "Always consult a physician for clinical evaluation.",
+      classProbabilities,
+      task: "regression",
+      value,
+      units,
+      range,
+    };
+  }
+
+  return {
+    primaryFinding: formatted,
+    confidencePercent: 0,
+    safetyTier: "no_finding",
+    plainSummary:
+      `The model produced a measured value of ${formatted}. ` +
+      "This is a raw measurement, not a diagnosis.",
+    disclaimer:
+      "ℹ Measured value reported for clinical context. AI tools have limitations. " +
+      "Always consult a physician for clinical evaluation.",
+    classProbabilities,
+    task: "regression",
+    value,
+    units,
+    range,
+  };
+}
+
 export function postprocess(rawOutput: Float32Array, spec: ClaritySpec): SafeResult {
-  const probabilities = toProbabilities(rawOutput, spec);
-  return translateResults(probabilities, spec.output.classes, spec.thresholds);
+  const task = spec.output.task ?? "binary";
+
+  switch (task) {
+    case "multilabel":
+      return interpretMultilabel(toProbabilities(rawOutput, spec), spec);
+    case "multiclass":
+      return interpretMulticlass(toProbabilities(rawOutput, spec), spec);
+    case "regression":
+      return interpretRegression(toRawValues(rawOutput, spec), spec);
+    case "binary":
+    default:
+      return translateResults(toProbabilities(rawOutput, spec), spec.output.classes, spec.thresholds);
+  }
 }
 
 function normalizeInPlace(values: Float32Array): void {

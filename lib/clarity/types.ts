@@ -16,10 +16,53 @@ export interface ClarityInputSpec {
   };
 }
 
+/**
+ * The kind of output a model produces. The platform dispatches every step of
+ * postprocessing on this discriminator instead of assuming a binary screener.
+ * Absent in a spec means "binary" for backward compatibility.
+ */
+export type ClarityTask = "binary" | "multilabel" | "multiclass" | "regression";
+
+/**
+ * Per-class metadata for multilabel / multiclass models. `labels` is a sparse
+ * lookup keyed by class name — a model may annotate only some of its classes
+ * (e.g. flag which of 18 pathologies count as "suspicious"). Every `name` must
+ * appear in `output.classes`.
+ */
+export interface ClarityLabelSpec {
+  name: string;
+  /** Probability at/over which this label is reported as a finding. */
+  threshold?: number;
+  /** Whether crossing the threshold should raise the safety tier. */
+  suspicious?: boolean;
+}
+
+/**
+ * Optional severity banding for regression models. The first band whose
+ * [min, max] window contains the value wins; `min`/`max` are inclusive and
+ * either may be omitted to make the band open-ended.
+ */
+export interface ClarityBandSpec {
+  min?: number;
+  max?: number;
+  tier: "possible_finding" | "no_finding" | "low_confidence";
+  label: string;
+}
+
 export interface ClarityOutputSpec {
+  /** Output contract; defaults to "binary" when absent. */
+  task?: ClarityTask;
   shape?: number[];
   classes: string[];
   activation: "softmax" | "sigmoid" | "none";
+  /** multilabel / multiclass: sparse per-class metadata keyed by class name. */
+  labels?: ClarityLabelSpec[];
+  /** regression: unit of the measured quantity (e.g. "ratio", "years"). */
+  units?: string | null;
+  /** regression: expected [min, max] of the value, for gauges/banding. */
+  range?: [number, number] | null;
+  /** regression: optional severity banding over the value. */
+  bands?: ClarityBandSpec[];
 }
 
 export interface ClaritySafetySpec {
@@ -27,9 +70,15 @@ export interface ClaritySafetySpec {
   disclaimer: string;
 }
 
+/**
+ * Detection thresholds. `possible_finding` / `low_confidence` are required for
+ * binary models (the single-score contract); other tasks carry per-label
+ * thresholds in `output.labels` and may omit them. `validation_status` is
+ * always required.
+ */
 export interface ClarityThresholdsSpec {
-  possible_finding: number;
-  low_confidence: number;
+  possible_finding?: number;
+  low_confidence?: number;
   validation_status: "unvalidated" | "validated";
 }
 
@@ -100,6 +149,14 @@ function parseNonEmptyString(value: unknown, path: string): string {
 
   if (value.length < 1) {
     invalid(path, "empty string", "non-empty string");
+  }
+
+  return value;
+}
+
+function parseBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") {
+    invalid(path, typeof value, "boolean");
   }
 
   return value;
@@ -311,12 +368,148 @@ function parseInputSpec(value: unknown, path: string): ClarityInputSpec {
   };
 }
 
+function parseTask(value: unknown, path: string): ClarityTask {
+  if (
+    value !== "binary" &&
+    value !== "multilabel" &&
+    value !== "multiclass" &&
+    value !== "regression"
+  ) {
+    invalid(path, `${String(value)}`, '"binary" | "multilabel" | "multiclass" | "regression"');
+  }
+
+  return value;
+}
+
+function parseLabelSpec(value: unknown, path: string, classes: string[]): ClarityLabelSpec {
+  if (!isRecord(value)) {
+    invalid(path, typeof value, "object");
+  }
+
+  checkNoExtraKeys(value, ["name", "threshold", "suspicious"], path);
+
+  const name = parseNonEmptyString(requireField(value, "name", `${path}.name`), `${path}.name`);
+  if (!classes.includes(name)) {
+    invalid(`${path}.name`, `"${name}"`, `a class listed in output.classes (${classes.join(", ")})`);
+  }
+
+  const threshold = hasOwn(value, "threshold")
+    ? parseProbability(value["threshold"], `${path}.threshold`)
+    : undefined;
+  const suspicious = hasOwn(value, "suspicious")
+    ? parseBoolean(value["suspicious"], `${path}.suspicious`)
+    : undefined;
+
+  return {
+    name,
+    ...(threshold !== undefined ? { threshold } : {}),
+    ...(suspicious !== undefined ? { suspicious } : {}),
+  };
+}
+
+function parseLabelArray(value: unknown, path: string, classes: string[]): ClarityLabelSpec[] {
+  if (!Array.isArray(value)) {
+    invalid(path, typeof value, "array of label objects");
+  }
+
+  if (value.length < 1) {
+    invalid(path, "empty array", "non-empty array of label objects");
+  }
+
+  return value.map((item, index) => parseLabelSpec(item, `${path}[${index}]`, classes));
+}
+
+function parseUnits(value: unknown, path: string): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  return parseNonEmptyString(value, path);
+}
+
+function parseRange(value: unknown, path: string): [number, number] | null {
+  if (value === null) {
+    return null;
+  }
+
+  if (!Array.isArray(value) || value.length !== 2) {
+    invalid(path, Array.isArray(value) ? `array of length ${value.length}` : typeof value, "[min, max] (two numbers) or null");
+  }
+
+  value.forEach((item, index) => {
+    if (typeof item !== "number" || !Number.isFinite(item)) {
+      invalid(`${path}[${index}]`, typeof item, "finite number");
+    }
+  });
+
+  const [min, max] = value as [number, number];
+  if (min > max) {
+    invalid(path, `[${min}, ${max}]`, "[min, max] with min <= max");
+  }
+
+  return [min, max];
+}
+
+function parseBandSpec(value: unknown, path: string): ClarityBandSpec {
+  if (!isRecord(value)) {
+    invalid(path, typeof value, "object");
+  }
+
+  checkNoExtraKeys(value, ["min", "max", "tier", "label"], path);
+
+  const min = hasOwn(value, "min") ? parseFiniteNumber(value["min"], `${path}.min`) : undefined;
+  const max = hasOwn(value, "max") ? parseFiniteNumber(value["max"], `${path}.max`) : undefined;
+  if (min !== undefined && max !== undefined && min > max) {
+    invalid(path, `min ${min} > max ${max}`, "min <= max");
+  }
+
+  const tierValue = requireField(value, "tier", `${path}.tier`);
+  if (tierValue !== "possible_finding" && tierValue !== "no_finding" && tierValue !== "low_confidence") {
+    invalid(`${path}.tier`, `${String(tierValue)}`, '"possible_finding" | "no_finding" | "low_confidence"');
+  }
+
+  const label = parseNonEmptyString(requireField(value, "label", `${path}.label`), `${path}.label`);
+
+  return {
+    ...(min !== undefined ? { min } : {}),
+    ...(max !== undefined ? { max } : {}),
+    tier: tierValue,
+    label,
+  };
+}
+
+function parseBandArray(value: unknown, path: string): ClarityBandSpec[] {
+  if (!Array.isArray(value)) {
+    invalid(path, typeof value, "array of band objects");
+  }
+
+  if (value.length < 1) {
+    invalid(path, "empty array", "non-empty array of band objects");
+  }
+
+  return value.map((item, index) => parseBandSpec(item, `${path}[${index}]`));
+}
+
+function parseFiniteNumber(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    invalid(path, typeof value, "finite number");
+  }
+
+  return value;
+}
+
 function parseOutputSpec(value: unknown, path: string): ClarityOutputSpec {
   if (!isRecord(value)) {
     invalid(path, typeof value, "object");
   }
 
-  checkNoExtraKeys(value, ["shape", "classes", "activation"], path);
+  checkNoExtraKeys(
+    value,
+    ["task", "shape", "classes", "activation", "labels", "units", "range", "bands"],
+    path
+  );
+
+  const task = hasOwn(value, "task") ? parseTask(value["task"], `${path}.task`) : "binary";
 
   const shapeValue = hasOwn(value, "shape") ? value["shape"] : undefined;
   const shape =
@@ -332,10 +525,23 @@ function parseOutputSpec(value: unknown, path: string): ClarityOutputSpec {
     `${path}.activation`
   );
 
+  const labels = hasOwn(value, "labels")
+    ? parseLabelArray(value["labels"], `${path}.labels`, classes)
+    : undefined;
+
+  const units = hasOwn(value, "units") ? parseUnits(value["units"], `${path}.units`) : undefined;
+  const range = hasOwn(value, "range") ? parseRange(value["range"], `${path}.range`) : undefined;
+  const bands = hasOwn(value, "bands") ? parseBandArray(value["bands"], `${path}.bands`) : undefined;
+
   return {
+    task,
     shape,
     classes,
     activation,
+    ...(labels !== undefined ? { labels } : {}),
+    ...(units !== undefined ? { units } : {}),
+    ...(range !== undefined ? { range } : {}),
+    ...(bands !== undefined ? { bands } : {}),
   };
 }
 
@@ -358,22 +564,37 @@ function parseSafetySpec(value: unknown, path: string): ClaritySafetySpec {
   };
 }
 
-function parseThresholdsSpec(value: unknown, path: string): ClarityThresholdsSpec {
+function parseThresholdsSpec(
+  value: unknown,
+  path: string,
+  task: ClarityTask
+): ClarityThresholdsSpec {
   if (!isRecord(value)) {
     invalid(path, typeof value, "object");
   }
 
   checkNoExtraKeys(value, ["possible_finding", "low_confidence", "validation_status"], path);
 
-  const possible_finding = parseProbability(
-    requireField(value, "possible_finding", `${path}.possible_finding`),
-    `${path}.possible_finding`
-  );
+  // Binary models carry a single-score contract, so both thresholds are
+  // required. Other tasks may omit them (per-label thresholds live in
+  // output.labels), but if present they must still be valid probabilities.
+  const requireScores = task === "binary";
 
-  const low_confidence = parseProbability(
-    requireField(value, "low_confidence", `${path}.low_confidence`),
-    `${path}.low_confidence`
-  );
+  const possible_finding =
+    requireScores || hasOwn(value, "possible_finding")
+      ? parseProbability(
+          requireField(value, "possible_finding", `${path}.possible_finding`),
+          `${path}.possible_finding`
+        )
+      : undefined;
+
+  const low_confidence =
+    requireScores || hasOwn(value, "low_confidence")
+      ? parseProbability(
+          requireField(value, "low_confidence", `${path}.low_confidence`),
+          `${path}.low_confidence`
+        )
+      : undefined;
 
   const validation_status = parseValidationStatus(
     requireField(value, "validation_status", `${path}.validation_status`),
@@ -381,8 +602,8 @@ function parseThresholdsSpec(value: unknown, path: string): ClarityThresholdsSpe
   );
 
   return {
-    possible_finding,
-    low_confidence,
+    ...(possible_finding !== undefined ? { possible_finding } : {}),
+    ...(low_confidence !== undefined ? { low_confidence } : {}),
     validation_status,
   };
 }
@@ -453,7 +674,11 @@ export function validateSpec(json: unknown): ClaritySpec {
   const input = parseInputSpec(requireField(json, "input", "input"), "input");
   const output = parseOutputSpec(requireField(json, "output", "output"), "output");
   const safety = parseSafetySpec(requireField(json, "safety", "safety"), "safety");
-  const thresholds = parseThresholdsSpec(requireField(json, "thresholds", "thresholds"), "thresholds");
+  const thresholds = parseThresholdsSpec(
+    requireField(json, "thresholds", "thresholds"),
+    "thresholds",
+    output.task ?? "binary"
+  );
 
   // source_model is OPTIONAL provenance metadata
   const sourceModelValue = hasOwn(json, "source_model") ? json["source_model"] : undefined;

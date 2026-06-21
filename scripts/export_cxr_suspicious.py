@@ -174,11 +174,20 @@ def _build_wrapper(base: Any, pathologies: list[str], suspicious_findings: list[
             self.register_buffer("indices", torch.tensor(indices, dtype=torch.long))
 
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
-            logits = self.model(x)  # [N, P]
-            selected = logits.index_select(1, self.indices)  # [N, k]
-            suspicious = selected.max(dim=1).values  # [N]
-            no_finding = torch.zeros_like(suspicious)  # [N]
-            return torch.stack([no_finding, suspicious], dim=1)  # [N, 2]
+            # TorchXRayVision models apply sigmoid internally: model(x) returns
+            # per-pathology PROBABILITIES in [0, 1], not logits.
+            probs = self.model(x)  # [N, P], in [0, 1]
+            selected = probs.index_select(1, self.indices)  # [N, k]
+            suspicious_p = selected.max(dim=1).values  # [N], in [0, 1]
+            # Convert the probability back to a logit so the runtime's
+            # softmax([0, logit]) reproduces the true probability p instead of
+            # squashing an already-squashed value (which pinned output to
+            # [0.5, 0.73] and made every scan read as "possible finding").
+            eps = 1e-6
+            p = suspicious_p.clamp(eps, 1.0 - eps)
+            suspicious_logit = torch.log(p / (1.0 - p))  # [N]
+            no_finding = torch.zeros_like(suspicious_logit)  # [N]
+            return torch.stack([no_finding, suspicious_logit], dim=1)  # [N, 2]
 
     wrapper = SuspiciousWrapper(base, idx).eval()
     return wrapper, matched

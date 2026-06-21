@@ -127,6 +127,135 @@ describe('validateSpec — valid input', () => {
   })
 })
 
+// ─── task-aware output / thresholds ────────────────────────────────────────────
+
+describe('validateSpec — task discriminator', () => {
+  it('defaults output.task to "binary" when absent', () => {
+    const result = validateSpec(VALID_SPEC)
+    expect(result.output.task).toBe('binary')
+  })
+
+  it('accepts every task value', () => {
+    for (const task of ['binary', 'multilabel', 'multiclass', 'regression'] as const) {
+      const spec = {
+        ...VALID_SPEC,
+        output: { ...VALID_SPEC.output, task },
+        // binary keeps the single-score thresholds; other tasks may omit them
+        thresholds:
+          task === 'binary'
+            ? VALID_SPEC.thresholds
+            : { validation_status: 'unvalidated' },
+      }
+      expect(() => validateSpec(spec)).not.toThrow()
+    }
+  })
+
+  it('throws on an unknown task', () => {
+    expect(() =>
+      validateSpec({ ...VALID_SPEC, output: { ...VALID_SPEC.output, task: 'segmentation' } })
+    ).toThrow(/task/)
+  })
+
+  it('binary still requires possible_finding and low_confidence', () => {
+    expect(() =>
+      validateSpec({ ...VALID_SPEC, thresholds: { validation_status: 'unvalidated' } })
+    ).toThrow(/possible_finding/)
+  })
+
+  it('multilabel may omit the single-score thresholds', () => {
+    const spec = {
+      ...VALID_SPEC,
+      output: {
+        task: 'multilabel',
+        classes: ['Mass', 'Nodule'],
+        activation: 'sigmoid',
+        labels: [{ name: 'Mass', threshold: 0.4, suspicious: true }],
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    }
+    const result = validateSpec(spec)
+    expect(result.output.task).toBe('multilabel')
+    expect(result.output.labels?.[0]).toEqual({ name: 'Mass', threshold: 0.4, suspicious: true })
+    expect(result.thresholds.possible_finding).toBeUndefined()
+  })
+
+  it('rejects a label whose name is not in classes', () => {
+    expect(() =>
+      validateSpec({
+        ...VALID_SPEC,
+        output: {
+          task: 'multilabel',
+          classes: ['Mass'],
+          activation: 'sigmoid',
+          labels: [{ name: 'Nodule' }],
+        },
+        thresholds: { validation_status: 'unvalidated' },
+      })
+    ).toThrow(/Nodule/)
+  })
+
+  it('rejects a label threshold outside [0, 1]', () => {
+    expect(() =>
+      validateSpec({
+        ...VALID_SPEC,
+        output: {
+          task: 'multilabel',
+          classes: ['Mass'],
+          activation: 'sigmoid',
+          labels: [{ name: 'Mass', threshold: 1.5 }],
+        },
+        thresholds: { validation_status: 'unvalidated' },
+      })
+    ).toThrow()
+  })
+
+  it('accepts regression units, range and bands', () => {
+    const spec = {
+      ...VALID_SPEC,
+      output: {
+        task: 'regression',
+        classes: ['CTR'],
+        activation: 'none',
+        units: 'ratio',
+        range: [0, 1],
+        bands: [{ min: 0.5, tier: 'possible_finding', label: 'Cardiomegaly range' }],
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    }
+    const result = validateSpec(spec)
+    expect(result.output.units).toBe('ratio')
+    expect(result.output.range).toEqual([0, 1])
+    expect(result.output.bands?.[0].tier).toBe('possible_finding')
+  })
+
+  it('accepts null units and range', () => {
+    const spec = {
+      ...VALID_SPEC,
+      output: { task: 'regression', classes: ['x'], activation: 'none', units: null, range: null },
+      thresholds: { validation_status: 'unvalidated' },
+    }
+    const result = validateSpec(spec)
+    expect(result.output.units).toBeNull()
+    expect(result.output.range).toBeNull()
+  })
+
+  it('rejects a range with min > max', () => {
+    expect(() =>
+      validateSpec({
+        ...VALID_SPEC,
+        output: { task: 'regression', classes: ['x'], activation: 'none', range: [1, 0] },
+        thresholds: { validation_status: 'unvalidated' },
+      })
+    ).toThrow()
+  })
+
+  it('rejects an unknown output key', () => {
+    expect(() =>
+      validateSpec({ ...VALID_SPEC, output: { ...VALID_SPEC.output, bogus: true } })
+    ).toThrow(/bogus/)
+  })
+})
+
 // ─── source_model validation errors ───────────────────────────────────────────
 
 describe('validateSpec — source_model errors', () => {
