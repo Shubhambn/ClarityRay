@@ -134,7 +134,7 @@
       "properties": {
         "task": {
           "type": "string",
-          "enum": ["binary", "multilabel", "multiclass", "regression"],
+          "enum": ["binary", "multilabel", "multiclass", "regression", "segmentation", "detection"],
           "description": "Output contract. Absent means \"binary\"."
         },
         "shape": {
@@ -197,6 +197,25 @@
               },
               "label": { "type": "string", "minLength": 1 }
             }
+          }
+        },
+        "mask": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+            "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "detection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["box_format", "max_detections"],
+          "properties": {
+            "box_format": { "type": "string", "enum": ["xyxy", "xywh", "cxcywh"] },
+            "max_detections": { "type": "integer", "minimum": 1 },
+            "score_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+            "coord_space": { "type": "string", "enum": ["pixel", "normalized"] }
           }
         }
       }

@@ -136,7 +136,8 @@ describe('validateSpec — task discriminator', () => {
   })
 
   it('accepts every task value', () => {
-    for (const task of ['binary', 'multilabel', 'multiclass', 'regression'] as const) {
+    const tasks = ['binary', 'multilabel', 'multiclass', 'regression', 'segmentation', 'detection'] as const
+    for (const task of tasks) {
       const spec = {
         ...VALID_SPEC,
         output: { ...VALID_SPEC.output, task },
@@ -152,7 +153,7 @@ describe('validateSpec — task discriminator', () => {
 
   it('throws on an unknown task', () => {
     expect(() =>
-      validateSpec({ ...VALID_SPEC, output: { ...VALID_SPEC.output, task: 'segmentation' } })
+      validateSpec({ ...VALID_SPEC, output: { ...VALID_SPEC.output, task: 'bogus' } })
     ).toThrow(/task/)
   })
 
@@ -253,6 +254,81 @@ describe('validateSpec — task discriminator', () => {
     expect(() =>
       validateSpec({ ...VALID_SPEC, output: { ...VALID_SPEC.output, bogus: true } })
     ).toThrow(/bogus/)
+  })
+
+  it('accepts a segmentation mask spec', () => {
+    const spec = {
+      ...VALID_SPEC,
+      output: {
+        task: 'segmentation',
+        shape: [1, 2, 256, 256],
+        classes: ['Lung', 'Lesion'],
+        activation: 'sigmoid',
+        mask: { threshold: 0.4, opacity: 0.6 },
+        labels: [{ name: 'Lesion', suspicious: true }],
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    }
+    const result = validateSpec(spec)
+    expect(result.output.task).toBe('segmentation')
+    expect(result.output.mask).toEqual({ threshold: 0.4, opacity: 0.6 })
+  })
+
+  it('rejects a mask opacity outside [0, 1]', () => {
+    expect(() =>
+      validateSpec({
+        ...VALID_SPEC,
+        output: { task: 'segmentation', classes: ['x'], activation: 'sigmoid', mask: { opacity: 2 } },
+        thresholds: { validation_status: 'unvalidated' },
+      })
+    ).toThrow()
+  })
+
+  it('accepts a detection spec', () => {
+    const spec = {
+      ...VALID_SPEC,
+      output: {
+        task: 'detection',
+        shape: [1, 100, 6],
+        classes: ['Nodule', 'Mass'],
+        activation: 'none',
+        detection: { box_format: 'xyxy', max_detections: 100, score_threshold: 0.3, coord_space: 'normalized' },
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    }
+    const result = validateSpec(spec)
+    expect(result.output.detection?.box_format).toBe('xyxy')
+    expect(result.output.detection?.max_detections).toBe(100)
+  })
+
+  it('rejects a detection with an unknown box_format', () => {
+    expect(() =>
+      validateSpec({
+        ...VALID_SPEC,
+        output: {
+          task: 'detection',
+          classes: ['x'],
+          activation: 'none',
+          detection: { box_format: 'polygon', max_detections: 10 },
+        },
+        thresholds: { validation_status: 'unvalidated' },
+      })
+    ).toThrow(/box_format/)
+  })
+
+  it('rejects a detection with non-integer max_detections', () => {
+    expect(() =>
+      validateSpec({
+        ...VALID_SPEC,
+        output: {
+          task: 'detection',
+          classes: ['x'],
+          activation: 'none',
+          detection: { box_format: 'xywh', max_detections: 1.5 },
+        },
+        thresholds: { validation_status: 'unvalidated' },
+      })
+    ).toThrow()
   })
 })
 

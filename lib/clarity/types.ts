@@ -21,7 +21,13 @@ export interface ClarityInputSpec {
  * postprocessing on this discriminator instead of assuming a binary screener.
  * Absent in a spec means "binary" for backward compatibility.
  */
-export type ClarityTask = "binary" | "multilabel" | "multiclass" | "regression";
+export type ClarityTask =
+  | "binary"
+  | "multilabel"
+  | "multiclass"
+  | "regression"
+  | "segmentation"
+  | "detection";
 
 /**
  * Per-class metadata for multilabel / multiclass models. `labels` is a sparse
@@ -49,13 +55,41 @@ export interface ClarityBandSpec {
   label: string;
 }
 
+/**
+ * Segmentation rendering hints. The mask itself is the model's per-pixel output
+ * (shape `[1, C, H, W]` or `[1, H, W]`); these only tune how it is binarized and
+ * overlaid. Per-class `suspicious`/`threshold` reuse `output.labels`.
+ */
+export interface ClarityMaskSpec {
+  /** Per-pixel score at/over which a pixel counts toward a class (sigmoid/none). */
+  threshold?: number;
+  /** Suggested overlay opacity in [0, 1] when drawing the mask on the scan. */
+  opacity?: number;
+}
+
+/**
+ * Detection output layout. The model emits a fixed-size `[1, N, K]` tensor with
+ * N = `max_detections` rows; each row is `[..4 coords.., score, class_id]`.
+ * Padding rows (score below `score_threshold`) are dropped.
+ */
+export interface ClarityDetectionSpec {
+  /** Encoding of the 4 coordinate columns. */
+  box_format: "xyxy" | "xywh" | "cxcywh";
+  /** Number of detection slots (rows) in the output tensor. */
+  max_detections: number;
+  /** Score at/over which a detection is reported. */
+  score_threshold?: number;
+  /** Whether coords are absolute input pixels or normalized [0, 1]. */
+  coord_space?: "pixel" | "normalized";
+}
+
 export interface ClarityOutputSpec {
   /** Output contract; defaults to "binary" when absent. */
   task?: ClarityTask;
   shape?: number[];
   classes: string[];
   activation: "softmax" | "sigmoid" | "none";
-  /** multilabel / multiclass: sparse per-class metadata keyed by class name. */
+  /** multilabel / multiclass / segmentation: sparse per-class metadata. */
   labels?: ClarityLabelSpec[];
   /** regression: unit of the measured quantity (e.g. "ratio", "years"). */
   units?: string | null;
@@ -63,6 +97,10 @@ export interface ClarityOutputSpec {
   range?: [number, number] | null;
   /** regression: optional severity banding over the value. */
   bands?: ClarityBandSpec[];
+  /** segmentation: overlay/binarization hints. */
+  mask?: ClarityMaskSpec;
+  /** detection: box output layout. */
+  detection?: ClarityDetectionSpec;
 }
 
 export interface ClaritySafetySpec {
@@ -368,17 +406,21 @@ function parseInputSpec(value: unknown, path: string): ClarityInputSpec {
   };
 }
 
+const CLARITY_TASKS: readonly ClarityTask[] = [
+  "binary",
+  "multilabel",
+  "multiclass",
+  "regression",
+  "segmentation",
+  "detection",
+];
+
 function parseTask(value: unknown, path: string): ClarityTask {
-  if (
-    value !== "binary" &&
-    value !== "multilabel" &&
-    value !== "multiclass" &&
-    value !== "regression"
-  ) {
-    invalid(path, `${String(value)}`, '"binary" | "multilabel" | "multiclass" | "regression"');
+  if (!CLARITY_TASKS.includes(value as ClarityTask)) {
+    invalid(path, `${String(value)}`, CLARITY_TASKS.map((t) => `"${t}"`).join(" | "));
   }
 
-  return value;
+  return value as ClarityTask;
 }
 
 function parseLabelSpec(value: unknown, path: string, classes: string[]): ClarityLabelSpec {
@@ -498,6 +540,72 @@ function parseFiniteNumber(value: unknown, path: string): number {
   return value;
 }
 
+function parsePositiveInteger(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    invalid(path, typeof value === "number" ? `${value}` : typeof value, "integer >= 1");
+  }
+
+  return value;
+}
+
+function parseMaskSpec(value: unknown, path: string): ClarityMaskSpec {
+  if (!isRecord(value)) {
+    invalid(path, typeof value, "object");
+  }
+
+  checkNoExtraKeys(value, ["threshold", "opacity"], path);
+
+  const threshold = hasOwn(value, "threshold")
+    ? parseProbability(value["threshold"], `${path}.threshold`)
+    : undefined;
+  const opacity = hasOwn(value, "opacity")
+    ? parseProbability(value["opacity"], `${path}.opacity`)
+    : undefined;
+
+  return {
+    ...(threshold !== undefined ? { threshold } : {}),
+    ...(opacity !== undefined ? { opacity } : {}),
+  };
+}
+
+function parseDetectionSpec(value: unknown, path: string): ClarityDetectionSpec {
+  if (!isRecord(value)) {
+    invalid(path, typeof value, "object");
+  }
+
+  checkNoExtraKeys(value, ["box_format", "max_detections", "score_threshold", "coord_space"], path);
+
+  const boxFormatValue = requireField(value, "box_format", `${path}.box_format`);
+  if (boxFormatValue !== "xyxy" && boxFormatValue !== "xywh" && boxFormatValue !== "cxcywh") {
+    invalid(`${path}.box_format`, `${String(boxFormatValue)}`, '"xyxy" | "xywh" | "cxcywh"');
+  }
+
+  const max_detections = parsePositiveInteger(
+    requireField(value, "max_detections", `${path}.max_detections`),
+    `${path}.max_detections`
+  );
+
+  const score_threshold = hasOwn(value, "score_threshold")
+    ? parseProbability(value["score_threshold"], `${path}.score_threshold`)
+    : undefined;
+
+  let coord_space: "pixel" | "normalized" | undefined;
+  if (hasOwn(value, "coord_space")) {
+    const cs = value["coord_space"];
+    if (cs !== "pixel" && cs !== "normalized") {
+      invalid(`${path}.coord_space`, `${String(cs)}`, '"pixel" | "normalized"');
+    }
+    coord_space = cs;
+  }
+
+  return {
+    box_format: boxFormatValue,
+    max_detections,
+    ...(score_threshold !== undefined ? { score_threshold } : {}),
+    ...(coord_space !== undefined ? { coord_space } : {}),
+  };
+}
+
 function parseOutputSpec(value: unknown, path: string): ClarityOutputSpec {
   if (!isRecord(value)) {
     invalid(path, typeof value, "object");
@@ -505,7 +613,7 @@ function parseOutputSpec(value: unknown, path: string): ClarityOutputSpec {
 
   checkNoExtraKeys(
     value,
-    ["task", "shape", "classes", "activation", "labels", "units", "range", "bands"],
+    ["task", "shape", "classes", "activation", "labels", "units", "range", "bands", "mask", "detection"],
     path
   );
 
@@ -532,6 +640,10 @@ function parseOutputSpec(value: unknown, path: string): ClarityOutputSpec {
   const units = hasOwn(value, "units") ? parseUnits(value["units"], `${path}.units`) : undefined;
   const range = hasOwn(value, "range") ? parseRange(value["range"], `${path}.range`) : undefined;
   const bands = hasOwn(value, "bands") ? parseBandArray(value["bands"], `${path}.bands`) : undefined;
+  const mask = hasOwn(value, "mask") ? parseMaskSpec(value["mask"], `${path}.mask`) : undefined;
+  const detection = hasOwn(value, "detection")
+    ? parseDetectionSpec(value["detection"], `${path}.detection`)
+    : undefined;
 
   return {
     task,
@@ -542,6 +654,8 @@ function parseOutputSpec(value: unknown, path: string): ClarityOutputSpec {
     ...(units !== undefined ? { units } : {}),
     ...(range !== undefined ? { range } : {}),
     ...(bands !== undefined ? { bands } : {}),
+    ...(mask !== undefined ? { mask } : {}),
+    ...(detection !== undefined ? { detection } : {}),
   };
 }
 

@@ -31,6 +31,8 @@ one field everything dispatches on. If omitted, it defaults to `"binary"`.
 | `multilabel` | N independent probabilities | `sigmoid` or `none`* | ranked findings list |
 | `multiclass` | 1-of-N mutually exclusive | `softmax` | top class + distribution |
 | `regression` | continuous value(s) | `none` | value + units + range gauge |
+| `segmentation` | per-pixel masks `[1, C, H, W]` | `sigmoid`/`softmax`/`none` | mask overlay + per-class coverage |
+| `detection` | boxes `[1, N, K]` (K ≥ 6) | `none` | boxes drawn on the scan + list |
 
 \* If your ONNX graph already applies sigmoid and emits probabilities in `[0, 1]`,
 declare `activation: "none"` so the runtime does **not** squash them again. Only
@@ -124,6 +126,43 @@ no-finding even when they win.
 }
 ```
 The first band whose `[min, max]` window contains the value wins.
+
+### segmentation
+```jsonc
+"output": {
+  "task": "segmentation",
+  "shape": [1, 2, 256, 256],   // [1, C, H, W]; C must equal classes.length
+  "activation": "sigmoid",      // sigmoid/none = independent masks; softmax = per-pixel argmax
+  "classes": ["Lung field", "Lesion"],
+  "mask": { "threshold": 0.5, "opacity": 0.5 },   // binarization + overlay hints
+  "labels": [ { "name": "Lesion", "suspicious": true } ]
+}
+```
+- For `[1, H, W]` (single foreground mask) `C` is 1 and `classes` has one entry.
+- The platform builds a single-assignment label map (argmax for softmax; the
+  highest over-`threshold` channel otherwise), overlays it on the scan, and
+  reports each class's pixel coverage. `suspicious` classes raise the safety tier.
+
+### detection
+```jsonc
+"output": {
+  "task": "detection",
+  "shape": [1, 100, 6],         // [1, N, K]; N = max_detections, K >= 6
+  "activation": "none",
+  "classes": ["Nodule", "Mass"],
+  "detection": {
+    "box_format": "xyxy",       // "xyxy" | "xywh" | "cxcywh"
+    "max_detections": 100,
+    "score_threshold": 0.3,
+    "coord_space": "normalized" // "normalized" (default) | "pixel"
+  },
+  "labels": [ { "name": "Mass", "suspicious": true } ]
+}
+```
+- Each row is `[..4 coords.., score, class_id]`. Rows scoring below
+  `score_threshold` (padding) are dropped. `pixel` coords are divided by the
+  declared `input.shape` width/height to normalize. Surviving boxes are drawn on
+  the scan and listed, ranked by score.
 
 ---
 

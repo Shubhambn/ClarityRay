@@ -253,6 +253,105 @@ function RawOutputs({ result }: { result: SafeResult }) {
   );
 }
 
+/**
+ * Segmentation coverage: each class with the fraction of the image its mask
+ * covers, colour-coded by whether it is suspicious. Coverage 0 classes are
+ * dropped from the list but never from `classProbabilities`.
+ */
+function SegmentationCoverage({ segmentation }: { segmentation: NonNullable<SafeResult['segmentation']> }) {
+  const present = segmentation.classes
+    .filter((c) => c.coverage > 0)
+    .sort((a, b) => b.coverage - a.coverage);
+
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+        SEGMENTED REGIONS{present.length > 0 ? ` (${present.length})` : ''}
+      </div>
+      <div className="panel-sm" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {present.length === 0 ? (
+          <span className="mono" style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+            No region crossed the segmentation threshold.
+          </span>
+        ) : (
+          present.map(({ label, coverage, suspicious }) => (
+            <div key={label}>
+              <div className="row-between" style={{ marginBottom: '2px' }}>
+                <span
+                  className="mono"
+                  style={{ fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{ color: suspicious ? 'var(--status-danger)' : 'var(--text-tertiary)' }}
+                  >
+                    ●
+                  </span>
+                  {label}
+                </span>
+                <span className="mono" style={{ fontSize: '11px' }}>{(coverage * 100).toFixed(1)}%</span>
+              </div>
+              <div style={{ height: '4px', background: 'var(--border-default)', borderRadius: '2px', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${(coverage * 100).toFixed(2)}%`,
+                    background: suspicious ? 'var(--status-danger)' : 'var(--accent-primary)',
+                    borderRadius: '2px',
+                  }}
+                />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Detection list: every reported box with its label, confidence, and normalized
+ * position, ranked by score. Suspicious detections are colour-marked.
+ */
+function DetectionList({ detections }: { detections: NonNullable<SafeResult['detections']> }) {
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+        DETECTIONS{detections.length > 0 ? ` (${detections.length})` : ''}
+      </div>
+      <div className="panel-sm" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {detections.length === 0 ? (
+          <span className="mono" style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+            No detection crossed the score threshold.
+          </span>
+        ) : (
+          detections.map((d, i) => (
+            <div key={`${d.label}-${i}`} className="row-between">
+              <span
+                className="mono"
+                style={{ fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{ color: d.suspicious ? 'var(--status-danger)' : 'var(--text-tertiary)' }}
+                >
+                  ▣
+                </span>
+                {d.label}
+                <span style={{ color: 'var(--text-tertiary)' }}>
+                  [{(d.box.x * 100).toFixed(0)},{(d.box.y * 100).toFixed(0)} ·{' '}
+                  {(d.box.w * 100).toFixed(0)}×{(d.box.h * 100).toFixed(0)}]
+                </span>
+              </span>
+              <span className="mono" style={{ fontSize: '11px' }}>{(d.score * 100).toFixed(1)}%</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SystemPanel(props: SystemPanelProps) {
   const { status, result, modelInfo, error, logs, onReset } = props;
   void logs;
@@ -476,6 +575,12 @@ export default function SystemPanel(props: SystemPanelProps) {
                     {task === 'multilabel' && result.findings && (
                       <FindingsList findings={result.findings} />
                     )}
+                    {task === 'segmentation' && result.segmentation && (
+                      <SegmentationCoverage segmentation={result.segmentation} />
+                    )}
+                    {task === 'detection' && result.detections && (
+                      <DetectionList detections={result.detections} />
+                    )}
                   </>
                 )}
 
@@ -591,6 +696,10 @@ export default function SystemPanel(props: SystemPanelProps) {
                   <RegressionReadout result={result} />
                 ) : task === 'multilabel' && result.findings ? (
                   <FindingsList findings={result.findings} />
+                ) : task === 'segmentation' && result.segmentation ? (
+                  <SegmentationCoverage segmentation={result.segmentation} />
+                ) : task === 'detection' && result.detections ? (
+                  <DetectionList detections={result.detections} />
                 ) : (
                   <ProbabilityBars result={result} />
                 )}

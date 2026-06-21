@@ -6,6 +6,7 @@ import { ContrastViewer } from '@/components/ContrastViewer';
 import { UploadZone } from '@/components/UploadZone';
 import { LogPanel } from '@/components/analysis/LogPanel';
 import SystemPanel from '@/components/analysis/SystemPanel';
+import { ResultOverlay } from '@/components/analysis/ResultOverlay';
 import { ConsentModal } from '@/components/ConsentModal';
 import TopBar from '@/components/nav/TopBar';
 import { useClarityRay, type ClarityRayStatus } from '@/hooks/useClarityRay';
@@ -91,6 +92,7 @@ export default function AnalysisPage() {
   const [imageURL, setImageURL] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showOverlay, setShowOverlay] = useState(true);
   const [mounted, setMounted] = useState<boolean>(false);
   const [consented, setConsented] = useState<boolean>(false);
   const [personaBannerDismissed, setPersonaBannerDismissed] = useState<boolean>(false);
@@ -191,6 +193,7 @@ export default function AnalysisPage() {
     setSelectedFile(file);
     setImageURL(URL.createObjectURL(file));
     setShowHeatmap(false);
+    setShowOverlay(true);
     setHeatmap(null);
     void hook.runAnalysis(file);
   };
@@ -203,6 +206,14 @@ export default function AnalysisPage() {
   const showPersonaBanner = consented && persona === null && !personaBannerDismissed;
   const modelVersion = hook.modelInfo?.version ? `v${hook.modelInfo.version}` : null;
   const hasHeatmap = heatmap !== null;
+
+  // Spatial tasks (segmentation / detection) render their real output over the
+  // scan via a canvas overlay instead of the contrast heatmap.
+  const resultTask = hook.result?.task;
+  const hasSpatialOverlay =
+    hook.status === 'complete' &&
+    hook.result !== null &&
+    (resultTask === 'segmentation' || resultTask === 'detection');
 
   const selectedFileMeta = useMemo(() => {
     if (!selectedFile) {
@@ -539,7 +550,7 @@ export default function AnalysisPage() {
                 </div>
               )}
 
-              {hook.status === 'complete' && hasHeatmap && (
+              {hook.status === 'complete' && hasHeatmap && !hasSpatialOverlay && (
                 <button
                   type="button"
                   className="badge badge-green"
@@ -554,6 +565,40 @@ export default function AnalysisPage() {
                 >
                   {showHeatmap ? 'Show Original' : 'Show Heatmap'}
                 </button>
+              )}
+
+              {hasSpatialOverlay && (
+                <button
+                  type="button"
+                  className="badge badge-green"
+                  style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    cursor: 'pointer',
+                    zIndex: 20,
+                  }}
+                  onClick={() => setShowOverlay((prev) => !prev)}
+                >
+                  {showOverlay ? 'Show Original' : 'Show Result'}
+                </button>
+              )}
+
+              {hasSpatialOverlay && showOverlay && imageURL && hook.result !== null && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 'var(--sp-3)',
+                    background: 'var(--bg-surface)',
+                    zIndex: 15,
+                  }}
+                >
+                  <ResultOverlay imageUrl={imageURL} result={hook.result} />
+                </div>
               )}
 
               {showHeatmap && hasHeatmap && (

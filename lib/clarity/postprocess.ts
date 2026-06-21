@@ -19,6 +19,32 @@ export type ClarityRayResult = {
   disclaimer: string;
 };
 
+/** segmentation: per-class pixel coverage of the predicted mask. */
+export interface SegmentationClass {
+  label: string;
+  /** Fraction of pixels [0, 1] assigned to this class. */
+  coverage: number;
+  suspicious: boolean;
+}
+
+export interface SegmentationResult {
+  width: number;
+  height: number;
+  /** width*height; each entry = assigned class index + 1, or 0 for background. */
+  labelMap: Uint8Array;
+  classes: SegmentationClass[];
+  /** Suggested overlay opacity, mirrored from the spec (default 0.5). */
+  opacity: number;
+}
+
+/** detection: one reported box, in normalized [0,1] input-image space. */
+export interface Detection {
+  label: string;
+  score: number;
+  suspicious: boolean;
+  box: { x: number; y: number; w: number; h: number };
+}
+
 export interface SafeResult {
   primaryFinding: string;
   confidencePercent: number;
@@ -39,6 +65,10 @@ export interface SafeResult {
   units?: string | null;
   /** regression: expected [min, max] of `value`, mirrored from the spec. */
   range?: [number, number] | null;
+  /** segmentation: the predicted mask + per-class coverage. */
+  segmentation?: SegmentationResult;
+  /** detection: reported boxes, ranked by score. */
+  detections?: Detection[];
 }
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -483,6 +513,249 @@ export function interpretRegression(values: number[], spec: ClaritySpec): SafeRe
   };
 }
 
+/**
+ * Flat sibling of {@link toProbabilities} for tensor-shaped tasks (segmentation,
+ * detection) whose length is governed by `output.shape`, not `classes.length`.
+ * Activation is applied inside the interpreter (per-pixel / per-row), so this
+ * just returns the finite raw values.
+ */
+export function toFlatOutput(rawOutput: Float32Array): number[] {
+  assert(rawOutput instanceof Float32Array, "postprocess expected rawOutput to be a Float32Array.");
+  const values = Array.from(rawOutput);
+  values.forEach((value, index) => {
+    assert(Number.isFinite(value), `Output at index ${index} is not finite.`);
+  });
+  return values;
+}
+
+/** Resolve [channels, height, width] from a segmentation output shape. */
+function segDims(shape: number[] | undefined): { channels: number; height: number; width: number } {
+  assert(Array.isArray(shape) && (shape.length === 3 || shape.length === 4),
+    "segmentation requires output.shape of [1, C, H, W] or [1, H, W].");
+  if (shape.length === 4) {
+    return { channels: shape[1], height: shape[2], width: shape[3] };
+  }
+  return { channels: 1, height: shape[1], width: shape[2] };
+}
+
+/**
+ * Segmentation: per-pixel class masks. Builds a single-assignment label map for
+ * overlay (argmax for softmax; highest over-threshold channel for sigmoid/none)
+ * and reports per-class pixel coverage. No channel is discarded.
+ */
+export function interpretSegmentation(values: number[], spec: ClaritySpec): SafeResult {
+  const { channels, height, width } = segDims(spec.output.shape);
+  const classes = spec.output.classes;
+  const pixels = height * width;
+
+  assert(classes.length === channels,
+    `segmentation class/channel mismatch: ${classes.length} classes vs ${channels} channels.`);
+  assert(values.length === channels * pixels,
+    `segmentation output length ${values.length} != C*H*W (${channels * pixels}).`);
+
+  const activation = spec.output.activation;
+  const threshold = spec.output.mask?.threshold ?? 0.5;
+  const opacity = spec.output.mask?.opacity ?? 0.5;
+  const labelMeta = new Map((spec.output.labels ?? []).map((l) => [l.name, l]));
+
+  const labelMap = new Uint8Array(pixels);
+  const counts = new Array<number>(channels).fill(0);
+
+  for (let p = 0; p < pixels; p++) {
+    let bestChannel = -1;
+    let bestScore = -Infinity;
+
+    if (activation === "softmax") {
+      // Per-pixel softmax across channels → argmax assignment.
+      const logits = new Array<number>(channels);
+      for (let c = 0; c < channels; c++) logits[c] = values[c * pixels + p] ?? 0;
+      const probs = softmax(logits);
+      for (let c = 0; c < channels; c++) {
+        if (probs[c] > bestScore) { bestScore = probs[c]; bestChannel = c; }
+      }
+    } else {
+      // Independent channels (sigmoid/none): highest channel that clears the bar.
+      for (let c = 0; c < channels; c++) {
+        const raw = values[c * pixels + p] ?? 0;
+        const score = activation === "sigmoid" ? sigmoid(raw) : raw;
+        if (score >= threshold && score > bestScore) { bestScore = score; bestChannel = c; }
+      }
+    }
+
+    if (bestChannel >= 0) {
+      labelMap[p] = bestChannel + 1;
+      counts[bestChannel] += 1;
+    }
+  }
+
+  const segClasses: SegmentationClass[] = classes.map((label, c) => ({
+    label,
+    coverage: pixels > 0 ? counts[c] / pixels : 0,
+    suspicious: labelMeta.get(label)?.suspicious ?? true,
+  }));
+
+  const classProbabilities = segClasses.map((c) => ({ label: c.label, probability: c.coverage }));
+
+  const present = segClasses
+    .filter((c) => c.coverage > 0)
+    .sort((a, b) => b.coverage - a.coverage);
+  const suspiciousPresent = present.filter((c) => c.suspicious);
+
+  const segmentation: SegmentationResult = { width, height, labelMap, classes: segClasses, opacity };
+
+  if (suspiciousPresent.length > 0) {
+    const top = suspiciousPresent[0];
+    return {
+      primaryFinding: top.label,
+      confidencePercent: Math.round(top.coverage * 100),
+      safetyTier: "possible_finding",
+      plainSummary:
+        `The AI segmented ${suspiciousPresent.length} region${suspiciousPresent.length === 1 ? "" : "s"} of interest, ` +
+        `most prominently "${top.label}" (${(top.coverage * 100).toFixed(1)}% of the image). ` +
+        "These regions require review by a qualified radiologist or physician.",
+      disclaimer:
+        "⚠ Region(s) of interest segmented. This is a screening tool, not a diagnosis. " +
+        "Please consult a licensed physician. Do not take medical action based on this result alone.",
+      classProbabilities,
+      task: "segmentation",
+      segmentation,
+    };
+  }
+
+  return {
+    primaryFinding: "No region segmented",
+    confidencePercent: 0,
+    safetyTier: "no_finding",
+    plainSummary:
+      "No region of interest crossed the segmentation threshold. " +
+      "A negative AI result does not rule out disease.",
+    disclaimer:
+      "ℹ No region segmented. This does not mean the image is clinically normal. " +
+      "AI tools have limitations. Always consult a physician for clinical evaluation.",
+    classProbabilities,
+    task: "segmentation",
+    segmentation,
+  };
+}
+
+/**
+ * Detection: a fixed-size [1, N, K] box tensor (K >= 6: 4 coords, score, class).
+ * Padding rows below the score threshold are dropped; surviving boxes are
+ * normalized to [0, 1] input space and ranked by score. No box is reinterpreted.
+ */
+export function interpretDetection(values: number[], spec: ClaritySpec): SafeResult {
+  const shape = spec.output.shape;
+  assert(Array.isArray(shape) && shape.length === 3,
+    "detection requires output.shape of [1, N, K].");
+  const rows = shape[1];
+  const cols = shape[2];
+  assert(cols >= 6, `detection rows need >= 6 columns (4 coords, score, class); got ${cols}.`);
+  assert(values.length === rows * cols,
+    `detection output length ${values.length} != N*K (${rows * cols}).`);
+
+  const det = spec.output.detection;
+  assert(det !== undefined, "detection task requires output.detection config.");
+  const classes = spec.output.classes;
+  const labelMeta = new Map((spec.output.labels ?? []).map((l) => [l.name, l]));
+  const scoreThreshold = det.score_threshold ?? 0.5;
+  const normalized = det.coord_space !== "pixel"; // default: normalized
+
+  // Input image dims (NCHW): [N, C, H, W].
+  const inShape = spec.input.shape;
+  const inW = inShape[inShape.length - 1] || 1;
+  const inH = inShape[inShape.length - 2] || 1;
+
+  const toXYWH = (a: number, b: number, c: number, d: number): { x: number; y: number; w: number; h: number } => {
+    if (det.box_format === "xyxy") return { x: a, y: b, w: c - a, h: d - b };
+    if (det.box_format === "cxcywh") return { x: a - c / 2, y: b - d / 2, w: c, h: d };
+    return { x: a, y: b, w: c, h: d }; // xywh
+  };
+
+  const detections: Detection[] = [];
+  for (let r = 0; r < rows; r++) {
+    const base = r * cols;
+    const score = values[base + 4] ?? 0;
+    if (!(score >= scoreThreshold)) continue;
+
+    const rawBox = toXYWH(values[base], values[base + 1], values[base + 2], values[base + 3]);
+    const box = normalized
+      ? rawBox
+      : { x: rawBox.x / inW, y: rawBox.y / inH, w: rawBox.w / inW, h: rawBox.h / inH };
+
+    const classIdx = Math.round(values[base + 5] ?? 0);
+    const label = classes[classIdx] ?? `class ${classIdx}`;
+    const suspicious = labelMeta.get(label)?.suspicious ?? true;
+
+    detections.push({ label, score, suspicious, box });
+  }
+
+  detections.sort((a, b) => b.score - a.score);
+
+  // Researcher-facing distribution: best score per class.
+  const bestByClass = new Map<string, number>();
+  for (const d of detections) {
+    bestByClass.set(d.label, Math.max(bestByClass.get(d.label) ?? 0, d.score));
+  }
+  const classProbabilities = classes.map((label) => ({
+    label,
+    probability: bestByClass.get(label) ?? 0,
+  }));
+
+  const suspiciousDets = detections.filter((d) => d.suspicious);
+
+  if (suspiciousDets.length > 0) {
+    const top = suspiciousDets[0];
+    const others = suspiciousDets.length - 1;
+    return {
+      primaryFinding: top.label,
+      confidencePercent: Math.round(top.score * 100),
+      safetyTier: "possible_finding",
+      plainSummary:
+        `The AI detected ${suspiciousDets.length} region${suspiciousDets.length === 1 ? "" : "s"} of concern, ` +
+        `most confidently "${top.label}"${others > 0 ? ` (and ${others} other${others === 1 ? "" : "s"})` : ""}. ` +
+        "These detections require review by a qualified radiologist or physician.",
+      disclaimer:
+        "⚠ Detection(s) flagged. This is a screening tool, not a diagnosis. " +
+        "Please consult a licensed physician. Do not take medical action based on this result alone.",
+      classProbabilities,
+      task: "detection",
+      detections,
+    };
+  }
+
+  if (detections.length > 0) {
+    // Boxes present but all flagged benign (suspicious: false).
+    return {
+      primaryFinding: detections[0].label,
+      confidencePercent: Math.round(detections[0].score * 100),
+      safetyTier: "no_finding",
+      plainSummary:
+        `The AI located ${detections.length} object${detections.length === 1 ? "" : "s"}, none flagged as a concern. ` +
+        "A negative AI result does not rule out disease.",
+      disclaimer:
+        "ℹ Objects detected but not flagged. This is not a diagnosis. " +
+        "AI tools have limitations. Always consult a physician for clinical evaluation.",
+      classProbabilities,
+      task: "detection",
+      detections,
+    };
+  }
+
+  return {
+    primaryFinding: "No detections",
+    confidencePercent: 0,
+    safetyTier: "no_finding",
+    plainSummary:
+      "No detection crossed the score threshold. A negative AI result does not rule out disease.",
+    disclaimer:
+      "ℹ No detections. This does not mean the image is clinically normal. " +
+      "AI tools have limitations. Always consult a physician for clinical evaluation.",
+    classProbabilities,
+    task: "detection",
+    detections,
+  };
+}
+
 export function postprocess(rawOutput: Float32Array, spec: ClaritySpec): SafeResult {
   const task = spec.output.task ?? "binary";
 
@@ -493,6 +766,10 @@ export function postprocess(rawOutput: Float32Array, spec: ClaritySpec): SafeRes
       return interpretMulticlass(toProbabilities(rawOutput, spec), spec);
     case "regression":
       return interpretRegression(toRawValues(rawOutput, spec), spec);
+    case "segmentation":
+      return interpretSegmentation(toFlatOutput(rawOutput), spec);
+    case "detection":
+      return interpretDetection(toFlatOutput(rawOutput), spec);
     case "binary":
     default:
       return translateResults(toProbabilities(rawOutput, spec), spec.output.classes, spec.thresholds);

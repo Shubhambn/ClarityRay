@@ -57,7 +57,7 @@ A marketplace must host models with fundamentally different output contracts:
 - **Multi-class** — one label out of N mutually exclusive classes (argmax).
 - **Regression / ordinal** — a continuous value or graded score (e.g. severity,
   bone age, cardiothoracic ratio).
-- *(Later)* **Segmentation / detection** — pixel masks or bounding boxes.
+- **Segmentation / detection** — pixel masks or bounding boxes (Phase 5).
 
 Today only the first is possible. Everything else is unrepresentable or
 silently wrong.
@@ -202,16 +202,47 @@ it appear in `/models` with the right task/validation badges, filterable by task
 runnable in-browser, and rendered via the Phase 3 per-task views — no code
 changes. `tsc`, ESLint, `npm run test` (109), and `py_compile` all green.
 
+### Phase 5 — Spatial tasks: segmentation & detection
+
+- [x] Extend the `task` enum + spec with `segmentation` and `detection`, their
+  per-task output config (`mask`, `detection`), parsing/validation in
+  [lib/clarity/types.ts](../lib/clarity/types.ts), and the discriminated union
+  in [clarity-schema.json](../clarity-schema.json).
+- [x] Add per-task interpreters in
+  [lib/clarity/postprocess.ts](../lib/clarity/postprocess.ts):
+  - `segmentation` → per-pixel label map (argmax for softmax; highest
+    over-threshold channel otherwise) + per-class pixel coverage; no channel
+    discarded.
+  - `detection` → fixed `[1, N, K]` boxes, padding rows dropped, coords
+    normalized (`xyxy`/`xywh`/`cxcywh`, pixel/normalized), ranked by score.
+- [x] Unit tests for both interpreters and the new spec parsing
+  ([lib/clarity/__tests__/](../lib/clarity/__tests__/)).
+- [x] UI: faithful scan overlay
+  ([components/analysis/ResultOverlay.tsx](../components/analysis/ResultOverlay.tsx))
+  — colour-coded mask / labelled boxes drawn on the scan, with a Show
+  Original/Show Result toggle — plus per-task panels (coverage list / detection
+  list) in [SystemPanel.tsx](../components/analysis/SystemPanel.tsx), persona-gated.
+- [x] Document the segmentation/detection contract in
+  [docs/publishing.md](publishing.md).
+
+**Exit criteria:** a published segmentation or detection model is interpreted
+faithfully (every mask channel / box surfaced, nothing collapsed) and its real
+spatial output is rendered over the scan, persona-appropriately. ✅ `tsc`,
+ESLint (no new findings), `next build`, and `npm run test` (124) all green.
+*Note:* no segmentation/detection model is bundled yet (no in-repo exporter, as
+with multiclass/regression); the path is exercised by unit tests and activates
+automatically when such a model is published.
+
 ---
 
 ## 5. Out of scope (for now)
 
-- Segmentation / object-detection output rendering (Phase 5+; spec should leave
-  room via the `task` enum).
 - Server-side inference (privacy invariant stands: inference runs in-browser via
   ONNX Runtime Web; the backend serves metadata only).
 - Model accuracy/clinical validation itself — the platform reports status, it
   does not certify models.
+- A bundled segmentation/detection exporter — Phase 5 ships the spec, runtime,
+  and rendering; an exporter would follow once a target checkpoint is chosen.
 
 ---
 
@@ -235,3 +266,4 @@ changes. `tsc`, ESLint, `npm run test` (109), and `py_compile` all green.
 2. Phase 2 faithful export (produces the first real multi-label models).
 3. Phase 3 UI (makes faithfulness visible to users).
 4. Phase 4 integrity & discovery (makes it a real, browsable marketplace).
+5. Phase 5 spatial tasks (segmentation & detection, rendered over the scan).

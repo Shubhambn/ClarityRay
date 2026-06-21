@@ -7,6 +7,8 @@ import {
   interpretMultilabel,
   interpretMulticlass,
   interpretRegression,
+  interpretSegmentation,
+  interpretDetection,
   postprocess,
 } from '../postprocess'
 import type { ClaritySpec } from '../types'
@@ -471,5 +473,140 @@ describe('postprocess dispatch', () => {
     const result = postprocess(new Float32Array([12.5]), spec)
     expect(result.task).toBe('regression')
     expect(result.value).toBe(12.5)
+  })
+
+  it('routes segmentation through the segmentation interpreter', () => {
+    const spec = makeSpec({
+      output: { task: 'segmentation', activation: 'sigmoid', shape: [1, 1, 2, 2], classes: ['Lesion'] },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+    // sigmoid(5) ≈ 0.99 (>=0.5) for 3 of 4 pixels, sigmoid(-5) ≈ 0.01 for 1.
+    const result = postprocess(new Float32Array([5, 5, 5, -5]), spec)
+    expect(result.task).toBe('segmentation')
+    expect(result.segmentation?.classes[0].coverage).toBeCloseTo(0.75)
+  })
+
+  it('routes detection through the detection interpreter', () => {
+    const spec = makeSpec({
+      output: {
+        task: 'detection',
+        activation: 'none',
+        shape: [1, 1, 6],
+        classes: ['Nodule'],
+        detection: { box_format: 'xywh', max_detections: 1, score_threshold: 0.5 },
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+    const result = postprocess(new Float32Array([0.1, 0.2, 0.3, 0.4, 0.9, 0]), spec)
+    expect(result.task).toBe('detection')
+    expect(result.detections).toHaveLength(1)
+    expect(result.detections?.[0].label).toBe('Nodule')
+  })
+})
+
+describe('interpretSegmentation', () => {
+  function segSpec(overrides?: Partial<ClaritySpec['output']>): ClaritySpec {
+    return makeSpec({
+      output: {
+        task: 'segmentation',
+        activation: 'sigmoid',
+        shape: [1, 2, 2, 2],
+        classes: ['Lesion', 'Effusion'],
+        ...overrides,
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+  }
+
+  it('reports per-class coverage and a label map without discarding channels', () => {
+    const spec = segSpec()
+    // channel 0 (Lesion): all 4 pixels high; channel 1 (Effusion): all low.
+    const result = interpretSegmentation([5, 5, 5, 5, -5, -5, -5, -5], spec)
+    expect(result.segmentation?.classes[0].coverage).toBeCloseTo(1)
+    expect(result.segmentation?.classes[1].coverage).toBeCloseTo(0)
+    expect(result.segmentation?.labelMap).toHaveLength(4)
+    expect(Array.from(result.segmentation!.labelMap)).toEqual([1, 1, 1, 1])
+    expect(result.safetyTier).toBe('possible_finding')
+    expect(result.primaryFinding).toBe('Lesion')
+  })
+
+  it('softmax assigns each pixel to its argmax channel', () => {
+    const spec = segSpec({ activation: 'softmax' })
+    // pixel order flattened per channel: ch0=[9,0,0,0], ch1=[0,9,9,9]
+    const result = interpretSegmentation([9, 0, 0, 0, 0, 9, 9, 9], spec)
+    expect(Array.from(result.segmentation!.labelMap)).toEqual([1, 2, 2, 2])
+    expect(result.segmentation?.classes[0].coverage).toBeCloseTo(0.25)
+    expect(result.segmentation?.classes[1].coverage).toBeCloseTo(0.75)
+  })
+
+  it('reports no finding when nothing crosses the threshold', () => {
+    const spec = segSpec()
+    const result = interpretSegmentation([-5, -5, -5, -5, -5, -5, -5, -5], spec)
+    expect(result.safetyTier).toBe('no_finding')
+    expect(Array.from(result.segmentation!.labelMap)).toEqual([0, 0, 0, 0])
+  })
+
+  it('benign classes (suspicious: false) do not raise the tier', () => {
+    const spec = segSpec({ labels: [{ name: 'Lesion', suspicious: false }, { name: 'Effusion', suspicious: false }] })
+    const result = interpretSegmentation([5, 5, 5, 5, -5, -5, -5, -5], spec)
+    expect(result.safetyTier).toBe('no_finding')
+  })
+})
+
+describe('interpretDetection', () => {
+  function detSpec(overrides?: Partial<ClaritySpec['output']>): ClaritySpec {
+    return makeSpec({
+      output: {
+        task: 'detection',
+        activation: 'none',
+        shape: [1, 3, 6],
+        classes: ['Nodule', 'Mass'],
+        detection: { box_format: 'xyxy', max_detections: 3, score_threshold: 0.5, coord_space: 'normalized' },
+        ...overrides,
+      },
+      thresholds: { validation_status: 'unvalidated' },
+    })
+  }
+
+  it('drops padding rows below the score threshold and ranks by score', () => {
+    const spec = detSpec()
+    const raw = new Float32Array([
+      0.0, 0.0, 0.5, 0.5, 0.9, 0, // Nodule, score 0.9
+      0.1, 0.1, 0.2, 0.2, 0.2, 1, // below threshold → dropped
+      0.3, 0.3, 0.6, 0.6, 0.7, 1, // Mass, score 0.7
+    ])
+    const result = interpretDetection(Array.from(raw), spec)
+    expect(result.detections).toHaveLength(2)
+    expect(result.detections?.[0].label).toBe('Nodule')
+    expect(result.detections?.[1].label).toBe('Mass')
+  })
+
+  it('converts xyxy boxes to normalized xywh', () => {
+    const spec = detSpec()
+    const result = interpretDetection([0.2, 0.1, 0.6, 0.5, 0.9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], spec)
+    const box = result.detections?.[0].box
+    expect(box?.x).toBeCloseTo(0.2)
+    expect(box?.y).toBeCloseTo(0.1)
+    expect(box?.w).toBeCloseTo(0.4)
+    expect(box?.h).toBeCloseTo(0.4)
+  })
+
+  it('converts pixel coords to normalized using the input shape', () => {
+    const spec = detSpec({
+      detection: { box_format: 'xywh', max_detections: 3, score_threshold: 0.5, coord_space: 'pixel' },
+    })
+    // input is 224×224; a box at x=112,y=56,w=112,h=112
+    const result = interpretDetection([112, 56, 112, 112, 0.9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], spec)
+    const box = result.detections?.[0].box
+    expect(box?.x).toBeCloseTo(0.5)
+    expect(box?.y).toBeCloseTo(0.25)
+    expect(box?.w).toBeCloseTo(0.5)
+  })
+
+  it('reports no detections when all rows are below threshold', () => {
+    const spec = detSpec()
+    const result = interpretDetection(new Array(18).fill(0), spec)
+    expect(result.detections).toHaveLength(0)
+    expect(result.safetyTier).toBe('no_finding')
   })
 })
