@@ -89,6 +89,170 @@ function ProbabilityBars({ result }: { result: SafeResult }) {
   );
 }
 
+/**
+ * Multilabel / multiclass ranked findings: every label the interpreter reported
+ * at/over its threshold, highest probability first. Suspicious hits are marked
+ * and bar-coloured so a clinician scans severity at a glance. Faithful — nothing
+ * is collapsed; an empty list means no label crossed its threshold.
+ */
+function FindingsList({ findings }: { findings: NonNullable<SafeResult['findings']> }) {
+  if (findings.length === 0) {
+    return (
+      <div>
+        <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+          FINDINGS
+        </div>
+        <div className="panel-sm">
+          <span className="mono" style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+            No label reached its reporting threshold.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+        FINDINGS ({findings.length})
+      </div>
+      <div className="panel-sm" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {findings.map(({ label, probability, suspicious }) => (
+          <div key={label}>
+            <div className="row-between" style={{ marginBottom: '2px' }}>
+              <span
+                className="mono"
+                style={{ fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{ color: suspicious ? 'var(--status-danger)' : 'var(--text-tertiary)' }}
+                >
+                  ●
+                </span>
+                {label}
+              </span>
+              <span className="mono" style={{ fontSize: '11px' }}>
+                {(probability * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div
+              style={{
+                height: '4px',
+                background: 'var(--border-default)',
+                borderRadius: '2px',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${(probability * 100).toFixed(2)}%`,
+                  background: suspicious ? 'var(--status-danger)' : 'var(--accent-primary)',
+                  borderRadius: '2px',
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Regression readout: the raw measured value with its units and, when the spec
+ * declares a range, a gauge placing the value within [min, max]. No probability
+ * framing — a regression model outputs a measurement, not a confidence.
+ */
+function RegressionReadout({ result }: { result: SafeResult }) {
+  const value = result.value ?? result.classProbabilities[0]?.probability ?? 0;
+  const units = result.units ?? null;
+  const range = result.range ?? null;
+
+  let gaugePct: number | null = null;
+  if (range && range[1] > range[0]) {
+    gaugePct = Math.min(1, Math.max(0, (value - range[0]) / (range[1] - range[0]))) * 100;
+  }
+
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+        MEASURED VALUE
+      </div>
+      <div className="panel-sm" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+          <span style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            {value}
+          </span>
+          {units && (
+            <span className="mono" style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+              {units}
+            </span>
+          )}
+        </div>
+
+        {gaugePct !== null && range && (
+          <div>
+            <div
+              style={{
+                position: 'relative',
+                height: '6px',
+                background: 'var(--border-default)',
+                borderRadius: '3px',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '-3px',
+                  left: `calc(${gaugePct.toFixed(2)}% - 1px)`,
+                  width: '2px',
+                  height: '12px',
+                  background: 'var(--accent-primary)',
+                  borderRadius: '1px',
+                }}
+              />
+            </div>
+            <div className="row-between" style={{ marginTop: '4px' }}>
+              <span className="mono" style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>
+                {range[0]}
+              </span>
+              <span className="mono" style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>
+                {range[1]}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Researcher-facing raw output table. For regression `classProbabilities` holds
+ * the raw values per quantity (not probabilities), so they are shown verbatim.
+ */
+function RawOutputs({ result }: { result: SafeResult }) {
+  return (
+    <div>
+      <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+        RAW OUTPUTS
+      </div>
+      <div className="panel-sm">
+        {result.classProbabilities.map(({ label, probability }) => (
+          <div key={label} className="row-between" style={{ marginBottom: 'var(--space-1)' }}>
+            <span className="mono" style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+              {label}
+            </span>
+            <span className="mono" style={{ fontSize: '11px' }}>{probability}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SystemPanel(props: SystemPanelProps) {
   const { status, result, modelInfo, error, logs, onReset } = props;
   void logs;
@@ -246,6 +410,9 @@ export default function SystemPanel(props: SystemPanelProps) {
           doctorDisclaimerBorderLeft = '3px solid var(--status-normal)';
         }
 
+        const task = result.task ?? 'binary';
+        const isRegression = task === 'regression';
+
         return (
           <>
             <div
@@ -271,28 +438,46 @@ export default function SystemPanel(props: SystemPanelProps) {
                     margin: 0,
                   }}
                 >
-                  {result.safetyTier === 'possible_finding' && '⚠ Possible Finding'}
-                  {result.safetyTier === 'low_confidence' && '○ Low Confidence'}
-                  {result.safetyTier === 'no_finding' && '✓ No Finding'}
+                  {isRegression
+                    ? result.primaryFinding
+                    : result.safetyTier === 'possible_finding'
+                      ? '⚠ Possible Finding'
+                      : result.safetyTier === 'low_confidence'
+                        ? '○ Low Confidence'
+                        : '✓ No Finding'}
                 </p>
                 {result.safetyTier === 'possible_finding' && (
-                  <span className="badge badge-red">POSSIBLE</span>
+                  <span className="badge badge-red">{isRegression ? 'FLAGGED' : 'POSSIBLE'}</span>
                 )}
                 {result.safetyTier === 'low_confidence' && (
                   <span className="badge badge-amber">LOW CONF</span>
                 )}
                 {result.safetyTier === 'no_finding' && (
-                  <span className="badge badge-green">NORMAL</span>
+                  <span className="badge badge-green">{isRegression ? 'IN RANGE' : 'NORMAL'}</span>
                 )}
               </div>
-              <span className="mono" style={{ marginTop: 'var(--space-1)', display: 'block' }}>
-                {result.confidencePercent}% confidence
-              </span>
+              {!isRegression && (
+                <span className="mono" style={{ marginTop: 'var(--space-1)', display: 'block' }}>
+                  {result.confidencePercent}% confidence
+                </span>
+              )}
             </div>
 
             {persona === 'researcher' && (
               <>
-                <ProbabilityBars result={result} />
+                {isRegression ? (
+                  <>
+                    <RegressionReadout result={result} />
+                    <RawOutputs result={result} />
+                  </>
+                ) : (
+                  <>
+                    <ProbabilityBars result={result} />
+                    {task === 'multilabel' && result.findings && (
+                      <FindingsList findings={result.findings} />
+                    )}
+                  </>
+                )}
 
                 <div>
                   <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
@@ -321,6 +506,7 @@ export default function SystemPanel(props: SystemPanelProps) {
                   <div className="panel-sm">
                     {(
                       [
+                        ['Task', modelInfo?.task ?? '—'],
                         ['Input', modelInfo?.inputShape?.join('×') ?? '—'],
                         ['Channels', channelMode(modelInfo?.inputShape)],
                         ['Activation', modelInfo?.activation ?? '—'],
@@ -353,9 +539,15 @@ export default function SystemPanel(props: SystemPanelProps) {
                           {modelInfo.sourceModel.source}
                         </span>
                       </div>
+                      <div className="row-between" style={{ marginBottom: 'var(--space-1)' }}>
+                        <span className="mono" style={{ color: 'var(--text-tertiary)' }}>Outputs</span>
+                        <span className="mono">
+                          {modelInfo.outputClasses.length} {task === 'regression' ? 'value(s)' : 'class(es)'}
+                        </span>
+                      </div>
                       {modelInfo.sourceModel.selected_findings && modelInfo.sourceModel.selected_findings.length > 0 && (
                         <div className="row-between">
-                          <span className="mono" style={{ color: 'var(--text-tertiary)' }}>Findings</span>
+                          <span className="mono" style={{ color: 'var(--text-tertiary)' }}>Curated subset</span>
                           <span className="mono" style={{ textAlign: 'right', maxWidth: '60%' }}>
                             {modelInfo.sourceModel.selected_findings.join(', ')}
                           </span>
@@ -392,10 +584,16 @@ export default function SystemPanel(props: SystemPanelProps) {
               <>
                 <div>
                   <p style={{ fontSize: '16px', fontWeight: 600 }}>{result.primaryFinding}</p>
-                  <span className="mono">Confidence: {result.confidencePercent}%</span>
+                  {!isRegression && <span className="mono">Confidence: {result.confidencePercent}%</span>}
                 </div>
 
-                <ProbabilityBars result={result} />
+                {isRegression ? (
+                  <RegressionReadout result={result} />
+                ) : task === 'multilabel' && result.findings ? (
+                  <FindingsList findings={result.findings} />
+                ) : (
+                  <ProbabilityBars result={result} />
+                )}
 
                 <div>
                   <div className="label" style={{ marginBottom: 'var(--space-2)' }}>

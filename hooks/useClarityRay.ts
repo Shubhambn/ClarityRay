@@ -14,7 +14,7 @@ import {
   type ClarityRayEvent,
 } from '@/lib/clarity/stateMachine'
 import { fetchSpec } from '@/lib/clarity/specLoader'
-import { type ClaritySpec, validateSpec } from '@/lib/clarity/types'
+import { type ClaritySpec, type ClarityTask, validateSpec } from '@/lib/clarity/types'
 
 export type { ClarityRayStatus }
 
@@ -22,6 +22,7 @@ export interface ModelInfo {
   id: string
   name: string
   version: string
+  task: ClarityTask
   inputShape: number[]
   outputClasses: string[]
   activation: ClaritySpec['output']['activation']
@@ -54,6 +55,7 @@ function toModelInfo(spec: ClaritySpec): ModelInfo {
     id: spec.id,
     name: spec.name,
     version: spec.version,
+    task: spec.output.task ?? 'binary',
     inputShape: spec.input.shape,
     outputClasses: spec.output.classes,
     activation: spec.output.activation,

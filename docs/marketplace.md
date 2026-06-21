@@ -162,16 +162,22 @@ regenerates the binary view on demand; `test_onnx.py` passes 4/4.
 
 ### Phase 3 — UI renders per task
 
-- [ ] [app/analysis/page.tsx](../app/analysis/page.tsx) and result components
+- [x] [app/analysis/page.tsx](../app/analysis/page.tsx) and result components
+  ([components/analysis/SystemPanel.tsx](../components/analysis/SystemPanel.tsx))
   branch on `task`:
-  - multilabel → ranked findings list with per-finding confidence;
-  - multiclass → top class + distribution;
-  - regression → value + gauge/range.
-- [ ] Persona gating preserved (Researcher sees raw numbers; Patient sees plain
-  language; Clinician sees interpretation).
-- [ ] Source-model / provenance panel generalized beyond `selected_findings`.
+  - multilabel → ranked `FindingsList` with per-finding confidence (suspicious
+    hits colour-coded);
+  - multiclass → top class + full distribution bars;
+  - regression → `RegressionReadout` (raw value + units + range gauge).
+- [x] Persona gating preserved (Researcher sees raw numbers / raw outputs;
+  Patient sees plain language; Clinician sees interpretation).
+- [x] Source-model / provenance panel generalized: shows task, output count, and
+  the curated subset (relabelled from `selected_findings`) when present.
 
-**Exit criteria:** each task type has a faithful, persona-appropriate view.
+**Exit criteria:** each task type has a faithful, persona-appropriate view. ✅
+`result.task` drives the result card and per-persona detail views; binary is
+unchanged (defaults when `task` absent). `tsc`, ESLint, and `npm run test`
+(109 tests) all green.
 
 ### Phase 4 — Marketplace integrity & discovery
 
