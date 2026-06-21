@@ -50,10 +50,20 @@ ctx.addEventListener('message', async (event: MessageEvent<InMsg>) => {
         return
       }
 
-      const tensor = new ort.Tensor('float32', imageData, inputShape)
-      const outputs = await session.run({ [inputName]: tensor })
+      // Resolve graph node names from the session itself so the runtime stays
+      // model-agnostic: honor the spec-provided name when it matches the graph,
+      // otherwise fall back to the session's first input/output name.
+      const resolvedInput = session.inputNames.includes(inputName)
+        ? inputName
+        : session.inputNames[0]
+      const resolvedOutput = session.outputNames.includes(outputName)
+        ? outputName
+        : session.outputNames[0]
 
-      const preferredOut = outputs[outputName]
+      const tensor = new ort.Tensor('float32', imageData, inputShape)
+      const outputs = await session.run({ [resolvedInput]: tensor })
+
+      const preferredOut = resolvedOutput ? outputs[resolvedOutput] : undefined
       const fallbackKey = Object.keys(outputs)[0]
       const outTensor = preferredOut ?? (fallbackKey ? outputs[fallbackKey] : undefined)
 

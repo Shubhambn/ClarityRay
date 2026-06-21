@@ -61,6 +61,8 @@ export default function ModelCard({ model }: ModelCardProps) {
 
           <div className="model-card__status">
             <span className="badge badge-green">{safetyTier}</span>
+            {safetyTier === 'RESEARCH' && <span className="badge badge-amber">RESEARCH DEMO</span>}
+            <span className="badge badge-muted">NOT DIAGNOSTIC</span>
           </div>
 
           <div className="model-card__bottom">
@@ -119,6 +121,7 @@ export default function ModelCard({ model }: ModelCardProps) {
           display: flex;
           align-items: center;
           gap: var(--space-2);
+          flex-wrap: wrap;
         }
 
         .model-card__bottom {

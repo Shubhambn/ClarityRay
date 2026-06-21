@@ -138,6 +138,7 @@ describe('translateResults', () => {
   it('returns low_confidence when abnormal prob is between thresholds', () => {
     const result = translateResults([0.7, 0.3], CLASSES, THRESHOLDS)
     expect(result.safetyTier).toBe('low_confidence')
+    expect(result.primaryFinding).toBe('Low-confidence suspicious pattern')
     expect(result.confidencePercent).toBe(30)
   })
 

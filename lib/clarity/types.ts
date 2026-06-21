@@ -33,6 +33,17 @@ export interface ClarityThresholdsSpec {
   validation_status: "unvalidated" | "validated";
 }
 
+/**
+ * Optional provenance for a model derived from an upstream/base model.
+ * Generic across families: `selected_findings` is only meaningful for models
+ * that map a multi-label source into a binary finding, so it is optional.
+ */
+export interface ClaritySourceModelSpec {
+  family: string;
+  source: string;
+  selected_findings?: string[];
+}
+
 export interface ClaritySpec {
   id: string;
   name: string;
@@ -46,6 +57,7 @@ export interface ClaritySpec {
   output: ClarityOutputSpec;
   safety: ClaritySafetySpec;
   thresholds: ClarityThresholdsSpec;
+  source_model?: ClaritySourceModelSpec;
 }
 
 function invalid(field: string, problem: string, expected: string): never {
@@ -375,6 +387,29 @@ function parseThresholdsSpec(value: unknown, path: string): ClarityThresholdsSpe
   };
 }
 
+function parseSourceModelSpec(value: unknown, path: string): ClaritySourceModelSpec {
+  if (!isRecord(value)) {
+    invalid(path, typeof value, "object");
+  }
+
+  checkNoExtraKeys(value, ["family", "source", "selected_findings"], path);
+
+  const family = parseNonEmptyString(requireField(value, "family", `${path}.family`), `${path}.family`);
+  const source = parseNonEmptyString(requireField(value, "source", `${path}.source`), `${path}.source`);
+
+  const findingsValue = hasOwn(value, "selected_findings") ? value["selected_findings"] : undefined;
+  const selected_findings =
+    findingsValue === undefined
+      ? undefined
+      : parseNonEmptyStringArray(findingsValue, `${path}.selected_findings`);
+
+  return {
+    family,
+    source,
+    ...(selected_findings !== undefined ? { selected_findings } : {}),
+  };
+}
+
 export function validateSpec(json: unknown): ClaritySpec {
   if (!isRecord(json)) {
     invalid("$", typeof json, "object");
@@ -395,6 +430,7 @@ export function validateSpec(json: unknown): ClaritySpec {
       "bodypart",
       "modality",
       "thresholds",
+      "source_model",
     ],
     "$"
   );
@@ -419,6 +455,12 @@ export function validateSpec(json: unknown): ClaritySpec {
   const safety = parseSafetySpec(requireField(json, "safety", "safety"), "safety");
   const thresholds = parseThresholdsSpec(requireField(json, "thresholds", "thresholds"), "thresholds");
 
+  // source_model is OPTIONAL provenance metadata
+  const sourceModelValue = hasOwn(json, "source_model") ? json["source_model"] : undefined;
+  const source_model = sourceModelValue !== undefined
+    ? parseSourceModelSpec(sourceModelValue, "source_model")
+    : undefined;
+
   return {
     id,
     name,
@@ -432,5 +474,6 @@ export function validateSpec(json: unknown): ClaritySpec {
     output,
     safety,
     thresholds,
+    ...(source_model !== undefined ? { source_model } : {}),
   };
 }

@@ -24,22 +24,18 @@ const PersonaContext = createContext<PersonaContextValue | null>(null);
 
 /* ── Provider ── */
 export function PersonaProvider({ children }: { children: React.ReactNode }) {
-  const [persona, setPersonaState] = useState<Persona>(() => {
-    if (typeof window === 'undefined') {
-      return null;
-    }
+  const [persona, setPersonaState] = useState<Persona>(null);
 
+  React.useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored === 'researcher' || stored === 'doctor' || stored === 'patient') {
-        return stored;
+        setPersonaState(stored);
       }
     } catch {
       /* localStorage unavailable in some SSR/iframe contexts — silently ignore */
     }
-
-    return null;
-  });
+  }, []);
 
   const setPersona = useCallback((p: Persona) => {
     setPersonaState(p);

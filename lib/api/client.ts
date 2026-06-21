@@ -315,7 +315,9 @@ export async function fetchModels(filters?: {
     params.set("modality", filters.modality);
   }
 
-  const endpoint = `${API_BASE}/models${params.toString() ? `?${params.toString()}` : ""}`;
+  // Route through the same-origin Next API, which proxies to the backend when
+  // configured and otherwise serves the on-disk catalog (degraded/local mode).
+  const endpoint = `/api/models${params.toString() ? `?${params.toString()}` : ""}`;
   const response = await fetchWithTimeout(endpoint);
 
   if (response.status === 404) {
@@ -345,7 +347,8 @@ export async function fetchModelBySlug(slug: string): Promise<ModelDetail> {
     throw new BackendError("Model slug is required", 400, "/models/:slug");
   }
 
-  const endpoint = `${API_BASE}/models/${encodeURIComponent(normalizedSlug)}`;
+  // Same-origin Next API (proxies to backend or serves on-disk model).
+  const endpoint = `/api/models/${encodeURIComponent(normalizedSlug)}`;
   const response = await fetchWithTimeout(endpoint);
 
   if (!response.ok) {

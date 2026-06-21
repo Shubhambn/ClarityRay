@@ -91,19 +91,20 @@ export default function AnalysisPage() {
   const [imageURL, setImageURL] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
-  const [consented, setConsented] = useState<boolean>(() => {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-    return localStorage.getItem(CONSENT_KEY) === 'accepted';
-  });
-  const [personaBannerDismissed, setPersonaBannerDismissed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-    return sessionStorage.getItem(PERSONA_BANNER_DISMISS_KEY) === '1';
-  });
+  const [mounted, setMounted] = useState<boolean>(false);
+  const [consented, setConsented] = useState<boolean>(false);
+  const [personaBannerDismissed, setPersonaBannerDismissed] = useState<boolean>(false);
   const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+    try {
+      setConsented(localStorage.getItem(CONSENT_KEY) === 'accepted');
+      setPersonaBannerDismissed(sessionStorage.getItem(PERSONA_BANNER_DISMISS_KEY) === '1');
+    } catch {
+      /* ignore storage access issues */
+    }
+  }, []);
 
   const isLoadingStatus =
     hook.status === 'loading_manifest' ||
@@ -210,6 +211,15 @@ export default function AnalysisPage() {
 
     return `${selectedFile.name} · ${formatBytes(selectedFile.size)}`;
   }, [selectedFile]);
+
+  if (!mounted) {
+    return (
+      <>
+        <TopBar />
+        <div style={{ minHeight: 'calc(100vh - 48px)', background: 'var(--bg-base)' }} />
+      </>
+    );
+  }
 
   if (!consented) {
     return (

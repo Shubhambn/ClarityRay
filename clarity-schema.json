@@ -168,6 +168,29 @@
           "enum": ["unvalidated", "validated"]
         }
       }
+    },
+    "source_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "source"],
+      "properties": {
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selected_findings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
-  } 
+  }
 }

@@ -23,6 +23,7 @@ This is a screening tool — it is not a diagnostic tool and cannot
 replace evaluation by a qualified medical professional.
 
 • All analysis runs locally on your device. Nothing is uploaded.
+• These are unvalidated research demos — not validated medical devices.
 • Results may be inaccurate. The AI model has known limitations.
 • Do not make medical decisions based on these results alone.
 • Always consult a licensed physician for diagnosis and treatment.`,

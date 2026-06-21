@@ -127,7 +127,7 @@ export function translateResults(
 
   if (findingProb >= lowThreshold) {
     return {
-      primaryFinding: "Low confidence signal",
+      primaryFinding: "Low-confidence suspicious pattern",
       confidencePercent: Math.round(findingProb * 100),
       safetyTier: "low_confidence",
       plainSummary:

@@ -117,6 +117,20 @@ describe('preprocessImage — pixel pipeline', () => {
     }
   })
 
+  it('1-channel 224×224 spec produces output length 1×1×224×224', async () => {
+    const spec = makeSpec([1, 1, 224, 224]) // 1 * 224 * 224 = 50176 elements
+
+    const pixels = new Uint8ClampedArray(224 * 224 * 4).fill(128)
+    buildCanvasMock(pixels)
+    global.createImageBitmap = vi.fn().mockResolvedValue({ width: 224, height: 224 })
+
+    const file = new File([''], 'test.png', { type: 'image/png' })
+    const result = await preprocessImage(file, spec)
+
+    expect(result).toBeInstanceOf(Float32Array)
+    expect(result).toHaveLength(50176)
+  })
+
   it('3-channel spec produces output length = channels × H × W', async () => {
     const spec = makeSpec([1, 3, 4, 4]) // 3 * 4 * 4 = 48 elements
     // Override normalize to mean/std for 3 channels

@@ -26,6 +26,13 @@ function PersonaBadge({ persona }: { persona: Persona }) {
   return <span className="badge badge-amber">NO PERSONA</span>;
 }
 
+function channelMode(inputShape: number[] | undefined): string {
+  const channels = inputShape?.[1];
+  if (channels === 1) return 'Grayscale (1)';
+  if (channels === 3) return 'RGB (3)';
+  return channels !== undefined ? `${channels}` : '—';
+}
+
 function loadingMessage(status: ClarityRayStatus): string {
   switch (status) {
     case 'loading_manifest':
@@ -315,7 +322,8 @@ export default function SystemPanel(props: SystemPanelProps) {
                     {(
                       [
                         ['Input', modelInfo?.inputShape?.join('×') ?? '—'],
-                        ['Activation', 'softmax'],
+                        ['Channels', channelMode(modelInfo?.inputShape)],
+                        ['Activation', modelInfo?.activation ?? '—'],
                         ['Model ID', modelInfo?.id ?? '—'],
                       ] as const
                     ).map(([key, val]) => (
@@ -328,6 +336,34 @@ export default function SystemPanel(props: SystemPanelProps) {
                     ))}
                   </div>
                 </div>
+
+                {modelInfo?.sourceModel && (
+                  <div>
+                    <div className="label" style={{ marginBottom: 'var(--space-2)' }}>
+                      SOURCE MODEL
+                    </div>
+                    <div className="panel-sm">
+                      <div className="row-between" style={{ marginBottom: 'var(--space-1)' }}>
+                        <span className="mono" style={{ color: 'var(--text-tertiary)' }}>Family</span>
+                        <span className="mono">{modelInfo.sourceModel.family}</span>
+                      </div>
+                      <div className="row-between" style={{ marginBottom: 'var(--space-1)' }}>
+                        <span className="mono" style={{ color: 'var(--text-tertiary)' }}>Source</span>
+                        <span className="mono" style={{ textAlign: 'right', maxWidth: '60%' }}>
+                          {modelInfo.sourceModel.source}
+                        </span>
+                      </div>
+                      {modelInfo.sourceModel.selected_findings && modelInfo.sourceModel.selected_findings.length > 0 && (
+                        <div className="row-between">
+                          <span className="mono" style={{ color: 'var(--text-tertiary)' }}>Findings</span>
+                          <span className="mono" style={{ textAlign: 'right', maxWidth: '60%' }}>
+                            {modelInfo.sourceModel.selected_findings.join(', ')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <div className="label" style={{ marginBottom: 'var(--space-1)' }}>SUMMARY</div>
@@ -465,7 +501,7 @@ export default function SystemPanel(props: SystemPanelProps) {
                       margin: 0,
                     }}
                   >
-                    Always consult a licensed physician for medical advice.
+                    Please show this result to a qualified clinician or radiologist.
                   </p>
                 </div>
               </>

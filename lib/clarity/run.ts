@@ -182,10 +182,19 @@ async function runInferenceMainThread(
     _fallbackSessions.set(spec.id, session)
   }
 
-  const tensor = new ort.Tensor('float32', imageData, spec.input.shape)
-  const outputs = await session.run({ [inputName]: tensor })
+  // Resolve graph node names from the session itself (see worker for rationale):
+  // honor the spec-provided name when it matches, else use the session's first.
+  const resolvedInput: string = session.inputNames.includes(inputName)
+    ? inputName
+    : session.inputNames[0]
+  const resolvedOutput: string | undefined = session.outputNames.includes(outputName)
+    ? outputName
+    : session.outputNames[0]
 
-  const preferredOutput = outputs[outputName]
+  const tensor = new ort.Tensor('float32', imageData, spec.input.shape)
+  const outputs = await session.run({ [resolvedInput]: tensor })
+
+  const preferredOutput = resolvedOutput ? outputs[resolvedOutput] : undefined
   const fallbackKey = Object.keys(outputs)[0]
   const outputTensor = preferredOutput ?? (fallbackKey ? outputs[fallbackKey] : undefined)
   assert(outputTensor !== undefined, 'Model run returned no output tensors.')

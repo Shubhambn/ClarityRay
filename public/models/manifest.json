@@ -6,6 +6,16 @@
       "version": "2",
       "url": "/models/densenet121-chest/model.onnx",
       "spec_url": "/models/densenet121-chest/clarity.json"
+    },
+    "densenet121-cxr-suspicious": {
+      "version": "1",
+      "url": "/models/densenet121-cxr-suspicious/model.onnx",
+      "spec_url": "/models/densenet121-cxr-suspicious/clarity.json"
+    },
+    "resnet50-cxr-suspicious": {
+      "version": "1",
+      "url": "/models/resnet50-cxr-suspicious/model.onnx",
+      "spec_url": "/models/resnet50-cxr-suspicious/clarity.json"
     }
   }
 }

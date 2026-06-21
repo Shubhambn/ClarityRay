@@ -24,12 +24,18 @@ export interface ModelInfo {
   version: string
   inputShape: number[]
   outputClasses: string[]
+  activation: ClaritySpec['output']['activation']
   bodypart: string
   modality: string
   thresholds?: {
     possible_finding?: number
     low_confidence?: number
     validation_status?: string
+  }
+  sourceModel?: {
+    family: string
+    source: string
+    selected_findings?: string[]
   }
 }
 
@@ -50,6 +56,7 @@ function toModelInfo(spec: ClaritySpec): ModelInfo {
     version: spec.version,
     inputShape: spec.input.shape,
     outputClasses: spec.output.classes,
+    activation: spec.output.activation,
     bodypart: spec.bodypart,
     modality: spec.modality,
     thresholds: {
@@ -57,6 +64,7 @@ function toModelInfo(spec: ClaritySpec): ModelInfo {
       low_confidence: spec.thresholds.low_confidence,
       validation_status: spec.thresholds.validation_status,
     },
+    ...(spec.source_model ? { sourceModel: spec.source_model } : {}),
   }
 }
 

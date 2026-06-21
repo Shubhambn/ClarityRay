@@ -47,6 +47,22 @@ ClarityRay has three personas: researcher, doctor, and patient. Researchers see 
 
 Each model is defined by a `clarity.json` contract and discovered through the model registry API. Model metadata is stored in Supabase-backed tables and model files are expected to be hosted on CDN-accessible URLs (commonly Hugging Face repos). The browser loads model artifacts once and reuses local cache on later runs. The contract makes the runtime generic across conforming models.
 
+**Bundled demo models** (`public/models/`):
+
+| Model | Input | Output |
+|---|---|---|
+| `densenet121-chest` | RGB 224×224 | Binary screening |
+| `efficientnetb0-pediatric-chest` | RGB 320×320 | Binary screening |
+| `densenet121-cxr-suspicious` | Grayscale 224×224 | Binary suspicious-finding screening |
+
+The CXR suspicious-finding family is built by a generic, registry-driven exporter
+(`scripts/export_cxr_suspicious.py`) that wraps multi-label chest X-ray models
+into the binary screening contract. See
+[scripts/README.md](scripts/README.md) for adding new models, and
+[docs/DENSENET121_CXR_ONBOARDING.md](docs/DENSENET121_CXR_ONBOARDING.md) for the
+operator guide. Even with no backend/Supabase, these models still appear under
+`/models` and run under `/analysis` via the on-disk static fallback.
+
 ### clarity CLI
 
 The converter package (`converter/clarityray`) turns model artifacts into a validated ONNX package with a generated spec. It supports framework detection and conversion (`.pt/.h5` through conversion helpers), ONNX validation checks, spec generation, and packaging. The current CLI entrypoint is `clarityray upload`, which handles conversion, validation, packaging, and optional registration flow. The pipeline is designed for researcher-owned model publishing workflows.
@@ -247,6 +263,7 @@ CLARITY_API_KEY=
 
 </details>
 
+
 ### Seed the database (first time)
 
 ```bash
@@ -326,23 +343,26 @@ Set the model to published in Supabase and it immediately appears in the model b
 
 ## clarity CLI
 
-The `clarity` CLI packages model artifacts for ClarityRay publication workflows.
+The converter package (`converter/clarityray`) packages model artifacts for
+ClarityRay publication workflows. **The only command implemented today is
+`clarityray upload`**, which converts (if needed), validates, generates the spec,
+packages, and optionally registers a model:
 
-| Command | Description |
+```bash
+python -m clarityray.cli upload ./model.onnx \
+  --classes "No suspicious chest finding,Possible suspicious chest finding" \
+  --bodypart chest --modality xray --no-upload
+```
+
+The commands below are **planned, not yet implemented**:
+
+| Command (planned) | Description |
 |---|---|
 | `clarity push <folder>` | Validate, upload to HF, register with platform |
 | `clarity init [folder]` | Interactive wizard to generate `clarity.json` |
 | `clarity convert <model>` | Convert `.pt/.h5` to ONNX |
 | `clarity validate <folder>` | Validate without uploading |
 | `clarity inspect <folder>` | Display parsed `clarity.json` |
-
-```bash
-clarity push ./my-model --dry-run     # validate only, no upload
-clarity push ./my-model --hf-only     # HF upload, skip platform
-clarity push ./my-model --dry-run     # show what would happen
-clarity validate ./my-model           # check folder is ready
-clarity inspect ./my-model            # pretty-print the spec
-```
 
 ## Project Structure
 

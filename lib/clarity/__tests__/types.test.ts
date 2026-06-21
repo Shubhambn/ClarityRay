@@ -100,6 +100,56 @@ describe('validateSpec — valid input', () => {
     const result = validateSpec(spec)
     expect(result.input.layout).toBe('NCHW')
   })
+
+  it('accepts an optional source_model block with selected_findings', () => {
+    const spec = {
+      ...VALID_SPEC,
+      source_model: {
+        family: 'DenseNet121',
+        source: 'TorchXRayVision densenet121-res224-all',
+        selected_findings: ['Mass', 'Nodule'],
+      },
+    }
+    const result = validateSpec(spec)
+    expect(result.source_model?.family).toBe('DenseNet121')
+    expect(result.source_model?.selected_findings).toEqual(['Mass', 'Nodule'])
+  })
+
+  it('accepts a minimal source_model without selected_findings', () => {
+    const spec = { ...VALID_SPEC, source_model: { family: 'X', source: 'Y' } }
+    const result = validateSpec(spec)
+    expect(result.source_model?.selected_findings).toBeUndefined()
+  })
+
+  it('omits source_model when not present', () => {
+    const result = validateSpec(VALID_SPEC)
+    expect(result.source_model).toBeUndefined()
+  })
+})
+
+// ─── source_model validation errors ───────────────────────────────────────────
+
+describe('validateSpec — source_model errors', () => {
+  it('throws when source_model.family is missing', () => {
+    expect(() =>
+      validateSpec({ ...VALID_SPEC, source_model: { source: 'Y' } })
+    ).toThrow()
+  })
+
+  it('throws when source_model has an unknown key', () => {
+    expect(() =>
+      validateSpec({ ...VALID_SPEC, source_model: { family: 'X', source: 'Y', bogus: 1 } })
+    ).toThrow()
+  })
+
+  it('throws when source_model.selected_findings contains an empty string', () => {
+    expect(() =>
+      validateSpec({
+        ...VALID_SPEC,
+        source_model: { family: 'X', source: 'Y', selected_findings: [''] },
+      })
+    ).toThrow()
+  })
 })
 
 // ─── Top-level type errors ────────────────────────────────────────────────────

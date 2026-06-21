@@ -289,6 +289,65 @@ export default function ModelDetailPage() {
                   </div>
                 </section>
 
+                <section className="panel" style={{ marginBottom: 'var(--sp-4, var(--space-4))' }}>
+                  <p className="label" style={{ marginBottom: 'var(--sp-3, var(--space-3))' }}>
+                    ABOUT THIS MODEL
+                  </p>
+
+                  <div style={{ display: 'grid', gap: 'var(--sp-4, var(--space-4))' }}>
+                    <div>
+                      <p className="label" style={{ marginBottom: 'var(--sp-1, var(--space-1))' }}>
+                        What it does
+                      </p>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        Produces a screening-only signal indicating whether a {model.bodypart || 'medical'}{' '}
+                        {model.modality || 'image'} shows a possible suspicious finding that may warrant
+                        review by a qualified clinician.
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="label" style={{ marginBottom: 'var(--sp-1, var(--space-1))' }}>
+                        What it does NOT do
+                      </p>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        It does not diagnose cancer or any disease, does not rule out disease, and is not a
+                        certified medical device. A &quot;no finding&quot; result does not mean the image is normal.
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="label" style={{ marginBottom: 'var(--sp-1, var(--space-1))' }}>
+                        Input requirements
+                      </p>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        A single {model.bodypart || ''} {model.modality || 'image'} (PNG or JPEG). The image is
+                        decoded and normalized entirely in your browser — it is never uploaded.
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="label" style={{ marginBottom: 'var(--sp-1, var(--space-1))' }}>
+                        Output interpretation
+                      </p>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        A binary screening signal: &quot;Possible suspicious finding&quot; or &quot;No suspicious
+                        finding&quot;, with a confidence percentage. Thresholds are illustrative and unvalidated.
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="label" style={{ marginBottom: 'var(--sp-1, var(--space-1))' }}>
+                        Safety
+                      </p>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        Research/screening demo only. Always confirm any result with a licensed physician or
+                        radiologist before taking any medical action.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
                 {model.validation ? (
                   <section className="panel" style={{ marginBottom: 'var(--sp-4, var(--space-4))' }}>
                     <p className="label" style={{ marginBottom: 'var(--sp-3, var(--space-3))' }}>

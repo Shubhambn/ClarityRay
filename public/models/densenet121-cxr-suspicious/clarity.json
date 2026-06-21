@@ -1,0 +1,62 @@
+{
+  "id": "densenet121-cxr-suspicious",
+  "name": "DenseNet121 CXR Suspicious Finding Demo",
+  "version": "1.0.0",
+  "certified": false,
+  "bodypart": "chest",
+  "modality": "xray",
+  "model": {
+    "file": "/models/densenet121-cxr-suspicious/model.onnx",
+    "format": "onnx"
+  },
+  "integrity": {
+    "sha256": "e25f0e2155f527727b116673914ef094f4368a035e3d5c70c12100a647c4dc03"
+  },
+  "input": {
+    "shape": [
+      1,
+      1,
+      224,
+      224
+    ],
+    "layout": "NCHW",
+    "normalize": {
+      "mean": [
+        0.5
+      ],
+      "std": [
+        0.5
+      ]
+    }
+  },
+  "output": {
+    "shape": [
+      1,
+      2
+    ],
+    "classes": [
+      "No suspicious chest finding",
+      "Possible suspicious chest finding"
+    ],
+    "activation": "softmax"
+  },
+  "safety": {
+    "tier": "screening",
+    "disclaimer": "This tool is for screening support only. It does not diagnose cancer or any disease. A possible finding requires clinician review. A no finding result does not rule out disease."
+  },
+  "thresholds": {
+    "possible_finding": 0.5,
+    "low_confidence": 0.25,
+    "validation_status": "unvalidated"
+  },
+  "source_model": {
+    "family": "DenseNet121",
+    "source": "TorchXRayVision densenet121-res224-all",
+    "selected_findings": [
+      "Nodule",
+      "Mass",
+      "Lung Lesion",
+      "Lung Opacity"
+    ]
+  }
+}
