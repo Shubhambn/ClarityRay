@@ -16,6 +16,12 @@ export interface ModelSummary {
   name: string;
   bodypart: string;
   modality: string;
+  /** Output contract ("binary" | "multilabel" | "multiclass" | "regression"). */
+  task: string;
+  /** Calibration/validation status ("unvalidated" | "validated"). */
+  validation_status: string;
+  /** Safety tier ("screening" | "research" | "investigational"). */
+  safety_tier: string;
   status: string;
   published_at: string | null;
   current_version: ModelVersion | null;
@@ -128,6 +134,9 @@ function mapModelSummary(value: unknown): ModelSummary {
       name: "",
       bodypart: "",
       modality: "",
+      task: "binary",
+      validation_status: "unvalidated",
+      safety_tier: "screening",
       status: "",
       published_at: null,
       current_version: null,
@@ -140,6 +149,11 @@ function mapModelSummary(value: unknown): ModelSummary {
     name: readString(value.name),
     bodypart: readString(value.bodypart) || 'other', // ✅ FIX
     modality: readString(value.modality) || 'other', // ✅ FIX
+    // Default to the conservative/safe values when the backend omits them:
+    // an unknown model reads as binary + unvalidated, never silently "validated".
+    task: readString(value.task) || 'binary',
+    validation_status: readString(value.validation_status) || 'unvalidated',
+    safety_tier: readString(value.safety_tier) || 'screening',
     status: readString(value.status),
     published_at: readNullableString(value.published_at),
     current_version:
@@ -305,6 +319,8 @@ export async function fetchWithTimeout(
 export async function fetchModels(filters?: {
   bodypart?: string;
   modality?: string;
+  task?: string;
+  validation_status?: string;
 }): Promise<ModelsResponse> {
   const params = new URLSearchParams();
 
@@ -313,6 +329,12 @@ export async function fetchModels(filters?: {
   }
   if (filters?.modality) {
     params.set("modality", filters.modality);
+  }
+  if (filters?.task) {
+    params.set("task", filters.task);
+  }
+  if (filters?.validation_status) {
+    params.set("validation_status", filters.validation_status);
   }
 
   // Route through the same-origin Next API, which proxies to the backend when

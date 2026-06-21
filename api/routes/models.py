@@ -66,7 +66,7 @@ async def _get_model_detail_from_db(slug: str) -> dict[str, Any] | None:
         method="GET",
         table="models",
         query={
-            "select": "id,slug,name,bodypart,modality,status,created_at",
+            "select": "id,slug,name,bodypart,modality,task,validation_status,safety_tier,status,created_at",
             "slug": f"eq.{slug}",
             "status": "eq.published",
             "limit": "1",
@@ -104,6 +104,8 @@ async def get_models(
     request: Request,
     bodypart: str | None = None,
     modality: str | None = None,
+    task: str | None = None,
+    validation_status: str | None = None,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=50),
 ) -> dict[str, Any]:
@@ -111,6 +113,8 @@ async def get_models(
         return await _get_models_from_db(
             bodypart=bodypart,
             modality=modality,
+            task=task,
+            validation_status=validation_status,
             page=page,
             limit=limit,
         )
@@ -173,6 +177,14 @@ async def register_model(
 
     bodypart = payload.spec.get("bodypart")
     modality = payload.spec.get("modality")
+    # Output contract + integrity status, declared by the author in clarity.json.
+    # Defaults keep older/binary specs valid and never imply validation.
+    spec_output = payload.spec.get("output") or {}
+    spec_thresholds = payload.spec.get("thresholds") or {}
+    spec_safety = payload.spec.get("safety") or {}
+    task = spec_output.get("task") or "binary"
+    validation_status = spec_thresholds.get("validation_status") or "unvalidated"
+    safety_tier = spec_safety.get("tier") or "screening"
 
     try:
         _, _, existing_rows = await _supabase_request(
@@ -193,6 +205,9 @@ async def register_model(
                         "status": "draft",
                         "bodypart": bodypart,
                         "modality": modality,
+                        "task": task,
+                        "validation_status": validation_status,
+                        "safety_tier": safety_tier,
                     }
                 ],
                 prefer="return=representation",
@@ -208,6 +223,9 @@ async def register_model(
                     "name": payload.name,
                     "bodypart": bodypart,
                     "modality": modality,
+                    "task": task,
+                    "validation_status": validation_status,
+                    "safety_tier": safety_tier,
                 },
                 prefer="return=minimal",
             )

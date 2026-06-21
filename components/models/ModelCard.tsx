@@ -8,32 +8,13 @@ interface ModelCardProps {
   model: ModelSummary;
 }
 
-function inferSafetyTier(clarityUrl?: string): string {
-  if (!clarityUrl) {
-    return 'SCREENING';
-  }
-
-  const normalized = clarityUrl.toLowerCase();
-  if (normalized.includes('research')) {
-    return 'RESEARCH';
-  }
-
-  if (normalized.includes('diagnostic')) {
-    return 'DIAGNOSTIC';
-  }
-
-  if (normalized.includes('screening')) {
-    return 'SCREENING';
-  }
-
-  return 'SCREENING';
-}
-
 export default function ModelCard({ model }: ModelCardProps) {
   const version = model.current_version ? model.current_version.version : null;
   const bodypart = model.bodypart.toUpperCase();
   const modality = model.modality.toUpperCase();
-  const safetyTier = inferSafetyTier(model.current_version?.clarity_url);
+  const task = (model.task || 'binary').toUpperCase();
+  const safetyTier = (model.safety_tier || 'screening').toUpperCase();
+  const isValidated = model.validation_status === 'validated';
   const fileSizeMb = model.current_version ? model.current_version.file_size_mb : null;
 
   return (
@@ -57,11 +38,18 @@ export default function ModelCard({ model }: ModelCardProps) {
           <div className="model-card__meta">
             <span className="badge badge-blue">{bodypart}</span>
             <span className="badge badge-muted">{modality}</span>
+            <span className="badge badge-muted">{task}</span>
           </div>
 
           <div className="model-card__status">
-            <span className="badge badge-green">{safetyTier}</span>
-            {safetyTier === 'RESEARCH' && <span className="badge badge-amber">RESEARCH DEMO</span>}
+            {/* Validation status is the headline integrity signal — an
+                unvalidated model must never blend in as if it were cleared. */}
+            {isValidated ? (
+              <span className="badge badge-green">VALIDATED</span>
+            ) : (
+              <span className="badge badge-red model-card__unvalidated">⚠ UNVALIDATED</span>
+            )}
+            <span className="badge badge-muted">{safetyTier}</span>
             <span className="badge badge-muted">NOT DIAGNOSTIC</span>
           </div>
 
@@ -142,6 +130,11 @@ export default function ModelCard({ model }: ModelCardProps) {
           color: var(--text-green, var(--accent-primary));
           font-size: 0.8rem;
           font-weight: 500;
+        }
+
+        .model-card__unvalidated {
+          font-weight: 700;
+          letter-spacing: 0.02em;
         }
       `}</style>
     </>

@@ -63,6 +63,20 @@ function statusBadge(status: string): {
   };
 }
 
+function taskOutputDescription(task: string): string {
+  switch (task) {
+    case 'multilabel':
+      return 'A multi-label result: every condition the model scores is reported with its own probability, ranked by confidence. Multiple findings can be present at once.';
+    case 'multiclass':
+      return 'A single most-likely class chosen from several mutually exclusive options, alongside the full probability distribution across all classes.';
+    case 'regression':
+      return 'A continuous measured value (with units and an expected range), not a finding/no-finding verdict. Optional severity bands provide clinical context.';
+    case 'binary':
+    default:
+      return 'A binary screening signal — "possible finding" or "no finding" — with a confidence percentage. Thresholds are illustrative and unvalidated.';
+  }
+}
+
 function deriveSafetyTier(model: ModelDetail): string {
   const normalized = model.status.trim().toLowerCase();
 
@@ -248,7 +262,35 @@ export default function ModelDetailPage() {
                 >
                   <span className={badge.className}>{badge.text}</span>
                   <span className="badge badge-muted">v{version}</span>
+                  <span className="badge badge-muted">{(model.task || 'binary').toUpperCase()}</span>
+                  {model.validation_status === 'validated' ? (
+                    <span className="badge badge-green">VALIDATED</span>
+                  ) : (
+                    <span className="badge badge-red" style={{ fontWeight: 700 }}>⚠ UNVALIDATED</span>
+                  )}
                 </div>
+
+                {model.validation_status !== 'validated' && (
+                  <section
+                    style={{
+                      background: 'rgba(239,68,68,0.08)',
+                      border: '1px solid rgba(239,68,68,0.25)',
+                      borderLeft: '3px solid var(--status-danger)',
+                      borderRadius: 'var(--r-lg, var(--radius-lg))',
+                      padding: 'var(--sp-4, var(--space-4))',
+                      marginBottom: 'var(--sp-4, var(--space-4))',
+                    }}
+                  >
+                    <p className="label" style={{ marginBottom: 'var(--sp-2, var(--space-2))', color: 'var(--status-danger)' }}>
+                      ⚠ UNVALIDATED RESEARCH DEMO
+                    </p>
+                    <p style={{ color: 'var(--text-secondary)' }}>
+                      This model has <strong>not</strong> been clinically validated or calibrated. Its
+                      outputs are illustrative only and must never be used to inform a diagnosis or any
+                      medical decision.
+                    </p>
+                  </section>
+                )}
 
                 <section
                   style={{
@@ -280,6 +322,21 @@ export default function ModelDetailPage() {
 
                     <span style={{ color: 'var(--text-secondary)' }}>Modality</span>
                     <span>{model.modality || '—'}</span>
+
+                    <span style={{ color: 'var(--text-secondary)' }}>Task</span>
+                    <span>{model.task || 'binary'}</span>
+
+                    <span style={{ color: 'var(--text-secondary)' }}>Validation</span>
+                    <span
+                      style={{
+                        color:
+                          model.validation_status === 'validated'
+                            ? 'var(--status-normal)'
+                            : 'var(--status-danger)',
+                      }}
+                    >
+                      {model.validation_status || 'unvalidated'}
+                    </span>
 
                     <span style={{ color: 'var(--text-secondary)' }}>Model Version</span>
                     <span>{model.current_version?.version ?? '—'}</span>
@@ -331,8 +388,7 @@ export default function ModelDetailPage() {
                         Output interpretation
                       </p>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                        A binary screening signal: &quot;Possible suspicious finding&quot; or &quot;No suspicious
-                        finding&quot;, with a confidence percentage. Thresholds are illustrative and unvalidated.
+                        {taskOutputDescription(model.task || 'binary')}
                       </p>
                     </div>
 

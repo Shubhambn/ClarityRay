@@ -163,6 +163,11 @@ def _build_model_summary(model: dict[str, Any], version: dict[str, Any] | None) 
         "name": model["name"],
         "bodypart": model.get("bodypart"),
         "modality": model.get("modality"),
+        # Output contract + integrity status (Phase 4). Default to the safe
+        # values so an older row without these columns never reads as validated.
+        "task": model.get("task") or "binary",
+        "validation_status": model.get("validation_status") or "unvalidated",
+        "safety_tier": model.get("safety_tier") or "screening",
         "status": model.get("status", "published"),
         "published_at": _to_iso8601(model.get("created_at")),
         "current_version": {
@@ -179,6 +184,8 @@ async def _get_models_from_db(
     *,
     bodypart: str | None,
     modality: str | None,
+    task: str | None = None,
+    validation_status: str | None = None,
     page: int,
     limit: int,
 ) -> dict[str, Any]:
@@ -187,7 +194,7 @@ async def _get_models_from_db(
 
     offset = (page - 1) * limit
     query: dict[str, str] = {
-        "select": "id,slug,name,bodypart,modality,status,created_at",
+        "select": "id,slug,name,bodypart,modality,task,validation_status,safety_tier,status,created_at",
         "status": "eq.published",
         "order": "created_at.desc",
         "limit": str(limit),
@@ -197,6 +204,10 @@ async def _get_models_from_db(
         query["bodypart"] = f"eq.{bodypart}"
     if modality:
         query["modality"] = f"eq.{modality}"
+    if task:
+        query["task"] = f"eq.{task}"
+    if validation_status:
+        query["validation_status"] = f"eq.{validation_status}"
 
     _, headers, models_data = await _supabase_request(
         method="GET",

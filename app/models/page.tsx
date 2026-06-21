@@ -10,15 +10,24 @@ import {
 
 const BODYPART_OPTIONS = ['all', 'chest', 'brain', 'bone', 'abdomen', 'spine', 'other'] as const;
 const MODALITY_OPTIONS = ['all', 'xray', 'ct', 'mri', 'ultrasound', 'pathology', 'other'] as const;
+const TASK_OPTIONS = ['all', 'binary', 'multilabel', 'multiclass', 'regression'] as const;
+const VALIDATION_OPTIONS = ['all', 'validated', 'unvalidated'] as const;
 
 function isActiveFilter(value: string): boolean {
   return value !== 'all';
 }
 
-function toFilters(bodypartFilter: string, modalityFilter: string): { bodypart?: string; modality?: string } {
+function toFilters(
+  bodypartFilter: string,
+  modalityFilter: string,
+  taskFilter: string,
+  validationFilter: string
+): { bodypart?: string; modality?: string; task?: string; validation_status?: string } {
   return {
     bodypart: isActiveFilter(bodypartFilter) ? bodypartFilter : undefined,
     modality: isActiveFilter(modalityFilter) ? modalityFilter : undefined,
+    task: isActiveFilter(taskFilter) ? taskFilter : undefined,
+    validation_status: isActiveFilter(validationFilter) ? validationFilter : undefined,
   };
 }
 
@@ -63,12 +72,18 @@ export default function ModelsPage() {
   const [backendOnline, setBackendOnline] = useState<boolean>(true);
   const [bodypartFilter, setBodypartFilter] = useState<string>('all');
   const [modalityFilter, setModalityFilter] = useState<string>('all');
+  const [taskFilter, setTaskFilter] = useState<string>('all');
+  const [validationFilter, setValidationFilter] = useState<string>('all');
   const [reloadToken, setReloadToken] = useState<number>(0);
   const requestIdRef = useRef<number>(0);
 
   const hasActiveFilters = useMemo(
-    () => isActiveFilter(bodypartFilter) || isActiveFilter(modalityFilter),
-    [bodypartFilter, modalityFilter]
+    () =>
+      isActiveFilter(bodypartFilter) ||
+      isActiveFilter(modalityFilter) ||
+      isActiveFilter(taskFilter) ||
+      isActiveFilter(validationFilter),
+    [bodypartFilter, modalityFilter, taskFilter, validationFilter]
   );
 
   const retryLoad = useCallback(() => {
@@ -87,7 +102,7 @@ export default function ModelsPage() {
       setBackendOnline(true);
 
       try {
-        const filters = toFilters(bodypartFilter, modalityFilter);
+        const filters = toFilters(bodypartFilter, modalityFilter, taskFilter, validationFilter);
         const response = await withTimeout(fetchModels(filters), timeoutMs, 'Models request timed out');
         if (!active || requestId !== requestIdRef.current) {
           return;
@@ -116,7 +131,7 @@ export default function ModelsPage() {
       active = false;
       setIsLoading(false);
     };
-  }, [bodypartFilter, modalityFilter, reloadToken]);
+  }, [bodypartFilter, modalityFilter, taskFilter, validationFilter, reloadToken]);
 
   return (
     <>
@@ -163,6 +178,32 @@ export default function ModelsPage() {
               ))}
             </select>
 
+            <select
+              value={taskFilter}
+              onChange={(event) => setTaskFilter(event.target.value)}
+              className="select"
+              aria-label="Filter by task"
+            >
+              {TASK_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option === 'all' ? 'All tasks' : option}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={validationFilter}
+              onChange={(event) => setValidationFilter(event.target.value)}
+              className="select"
+              aria-label="Filter by validation status"
+            >
+              {VALIDATION_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option === 'all' ? 'All validation' : option}
+                </option>
+              ))}
+            </select>
+
             {hasActiveFilters && (
               <button
                 type="button"
@@ -170,6 +211,8 @@ export default function ModelsPage() {
                 onClick={() => {
                   setBodypartFilter('all');
                   setModalityFilter('all');
+                  setTaskFilter('all');
+                  setValidationFilter('all');
                 }}
               >
                 Clear filters

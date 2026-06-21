@@ -22,13 +22,24 @@ interface ClaritySafety {
   disclaimer?: string
 }
 
+interface ClarityOutput {
+  task?: string
+  classes?: string[]
+}
+
+interface ClarityThresholds {
+  validation_status?: string
+}
+
 interface ClarityJson {
   id?: string
   name?: string
   version?: string
   bodypart?: string
   modality?: string
+  output?: ClarityOutput
   safety?: ClaritySafety
+  thresholds?: ClarityThresholds
 }
 
 export interface StaticModelVersion {
@@ -46,6 +57,12 @@ export interface StaticModelSummary {
   name: string
   bodypart: string
   modality: string
+  /** Output contract declared in clarity.json (defaults to "binary"). */
+  task: string
+  /** Calibration/validation status from clarity.json thresholds. */
+  validation_status: string
+  /** Safety tier from clarity.json safety block. */
+  safety_tier: string
   status: string
   published_at: string | null
   current_version: StaticModelVersion | null
@@ -65,6 +82,8 @@ export interface StaticModelsResponse {
 export interface ModelFilters {
   bodypart?: string
   modality?: string
+  task?: string
+  validation_status?: string
 }
 
 function readJson<T>(path: string): T | null {
@@ -113,6 +132,11 @@ function buildSummary(slug: string, entry: { version: string; url: string; spec_
     name: spec.name ?? slug,
     bodypart: spec.bodypart ?? 'other',
     modality: spec.modality ?? 'other',
+    // task absent in a spec means binary; mirror the runtime's default so the
+    // catalog never mislabels a legacy binary model.
+    task: spec.output?.task ?? 'binary',
+    validation_status: spec.thresholds?.validation_status ?? 'unvalidated',
+    safety_tier: spec.safety?.tier ?? 'screening',
     status: 'published',
     published_at: null,
     current_version: current,
@@ -124,6 +148,15 @@ function matchesFilters(summary: StaticModelSummary, filters: ModelFilters): boo
     return false
   }
   if (filters.modality && summary.modality.toLowerCase() !== filters.modality.toLowerCase()) {
+    return false
+  }
+  if (filters.task && summary.task.toLowerCase() !== filters.task.toLowerCase()) {
+    return false
+  }
+  if (
+    filters.validation_status &&
+    summary.validation_status.toLowerCase() !== filters.validation_status.toLowerCase()
+  ) {
     return false
   }
   return true

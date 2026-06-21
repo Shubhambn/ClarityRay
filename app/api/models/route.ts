@@ -14,8 +14,12 @@ function filtersFromUrl(url: string): ModelFilters {
   const filters: ModelFilters = {};
   const bodypart = params.get('bodypart');
   const modality = params.get('modality');
+  const task = params.get('task');
+  const validationStatus = params.get('validation_status');
   if (bodypart) filters.bodypart = bodypart;
   if (modality) filters.modality = modality;
+  if (task) filters.task = task;
+  if (validationStatus) filters.validation_status = validationStatus;
   return filters;
 }
 

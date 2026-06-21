@@ -181,16 +181,26 @@ unchanged (defaults when `task` absent). `tsc`, ESLint, and `npm run test`
 
 ### Phase 4 — Marketplace integrity & discovery
 
-- [ ] Surface real validation/calibration status per model in `/models` and the
-  detail page; make `unvalidated` visually unmistakable.
-- [ ] Make `/models` filterable by `task`, `modality`, `bodypart`, validation
-  status (both the FastAPI route and the on-disk fallback in
-  [lib/server/staticModels.ts](../lib/server/staticModels.ts)).
-- [ ] Document the publishing contract for external authors (what a valid
-  `clarity.json` must declare per task).
+- [x] Surface real validation/calibration status per model in `/models` (card)
+  and the detail page; `unvalidated` is an unmistakable red **⚠ UNVALIDATED**
+  badge + banner. Replaced `ModelCard`'s URL-string-sniffing with real
+  `safety_tier` / `validation_status` / `task` from the spec.
+- [x] Make `/models` filterable by `task`, `modality`, `bodypart`, validation
+  status — in the on-disk fallback
+  ([lib/server/staticModels.ts](../lib/server/staticModels.ts)) and the FastAPI
+  route ([api/routes/models.py](../api/routes/models.py) +
+  [api/main.py](../api/main.py), with migration
+  [005_model_task_validation.sql](../supabase/migrations/005_model_task_validation.sql)).
+- [x] Document the publishing contract for external authors
+  ([docs/publishing.md](publishing.md)) — what a valid `clarity.json` must
+  declare per task.
 
 **Exit criteria:** an external author can publish a non-binary model and have it
-listed, run, and rendered faithfully without code changes.
+listed, run, and rendered faithfully without code changes. ✅ Dropping a
+`task: "multilabel"` model under `public/models/<slug>/` (+ manifest entry) makes
+it appear in `/models` with the right task/validation badges, filterable by task,
+runnable in-browser, and rendered via the Phase 3 per-task views — no code
+changes. `tsc`, ESLint, `npm run test` (109), and `py_compile` all green.
 
 ---
 
