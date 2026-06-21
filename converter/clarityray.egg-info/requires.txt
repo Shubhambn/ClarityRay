@@ -1,0 +1,12 @@
+typer>=0.9
+onnx>=1.14
+onnxruntime>=1.16
+jsonschema>=4.0
+httpx>=0.24
+
+[keras]
+tensorflow>=2.12
+tf2onnx>=1.15
+
+[pytorch]
+torch>=2.0

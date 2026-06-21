@@ -1,0 +1,2 @@
+[console_scripts]
+clarityray = clarityray.cli:app

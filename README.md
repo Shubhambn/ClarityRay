@@ -169,7 +169,51 @@ Adding a model to ClarityRay requires zero code changes — only a `clarity.json
 | Python | ≥ 3.10 | For API and converter tooling |
 | Git | any | Source control |
 
-### Clone and install
+### Quick Start (one command)
+
+Clone the repo then run the setup script for your OS. It checks prerequisites, installs all dependencies, and creates the required `.env` files automatically.
+
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/Shubhambn/Clarity
+cd Clarity
+.\setup.ps1
+```
+
+**Linux / macOS (Bash):**
+```bash
+git clone https://github.com/Shubhambn/Clarity
+cd Clarity
+chmod +x setup.sh && ./setup.sh
+```
+
+Optional flags — skip the converter CLI if you only want to run the app:
+```powershell
+.\setup.ps1 -SkipConverter   # Windows
+./setup.sh --skip-converter  # Linux / macOS
+```
+
+After the script finishes, open **two terminals**:
+
+```bash
+# Terminal 1 - Backend API
+cd api && uvicorn main:app --reload
+# -> http://localhost:8000
+# -> Swagger docs: http://localhost:8000/docs
+
+# Terminal 2 - Frontend
+npm run dev
+# -> http://localhost:3000
+```
+
+> The app works without a database. Supabase fields in `api/.env` are left blank by default, which puts the API in degraded mode — local UI flows and browser inference run fine.
+
+---
+
+### Manual setup (step by step)
+
+<details>
+<summary>Expand if you prefer to run each step yourself</summary>
 
 ```bash
 git clone https://github.com/Shubhambn/Clarity
@@ -181,37 +225,27 @@ npm install
 # Backend API
 cd api && pip install -r requirements.txt && cd ..
 
-# Converter CLI (optional — for publishing models)
+# Converter CLI (optional - for publishing models)
 cd converter && pip install -e '.[pytorch]' && cd ..
 ```
 
-### Environment setup
+**Environment files:**
 
 ```bash
-# Frontend (.env.local in project root)
+# .env.local (project root)
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
 ```bash
-# Backend (api/.env)
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-service-role-key
+# api/.env
 PORT=8000
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3002
+SUPABASE_URL=
+SUPABASE_KEY=
+CLARITY_API_KEY=
 ```
 
-If Supabase is not configured, API routes that depend on DB return a database-unavailable response; frontend development for static/UI flows still works immediately.
-
-### Run in development
-
-```bash
-# Terminal 1 — Backend API
-cd api && uvicorn main:app --reload
-
-# Terminal 2 — Frontend
-npm run dev
-
-# Open http://localhost:3000
-```
+</details>
 
 ### Seed the database (first time)
 
