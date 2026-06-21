@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Generic ONNX smoke test for any exported ClarityRay model directory.
+"""Generic, task-aware ONNX smoke test for any exported ClarityRay model dir.
 
-Phase 1 verification (docs/DENSENET121_CXR_IMPLEMENTATION_PLAN.md), generalized:
-it is NOT specific to one model. For each target it reads the model's
+It is NOT specific to one model. For each target it reads the model's
 ``clarity.json``, feeds a zero tensor of the declared ``input.shape``, and
-asserts the output's last dimension matches ``len(output.classes)`` and that all
-values are finite. It also re-verifies the recorded sha256 if present.
+verifies the output against the declared ``output.task`` (docs/marketplace.md):
+
+  - last dim equals ``len(output.classes)`` and the declared ``output.shape``
+    (if present) matches the graph's actual shape, for every task;
+  - ``binary`` must declare exactly 2 classes;
+  - ``multilabel`` with activation ``none`` must already emit values in [0, 1]
+    (the runtime will not re-squash them);
+  - all values are finite.
+
+It also re-verifies the recorded sha256 if present.
 
 Usage:
     python scripts/test_onnx.py                       # test every model dir
@@ -55,8 +62,12 @@ def test_one(model_dir: Path) -> bool:
 
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     input_shape = tuple(spec["input"]["shape"])
-    classes = spec["output"]["classes"]
+    output = spec["output"]
+    classes = output["classes"]
     expected_last = len(classes)
+    task = output.get("task", "binary")  # absent means binary
+    activation = output["activation"]
+    declared_shape = output.get("shape")
 
     # integrity check (if recorded)
     recorded = spec.get("integrity", {}).get("sha256")
@@ -73,6 +84,9 @@ def test_one(model_dir: Path) -> bool:
     out = sess.run(None, {feed_name: zeros})[0]
 
     ok = True
+
+    # The runtime feeds one image and reads len(classes) values per class, so the
+    # ONNX output's last dim must equal the class count for every task.
     if out.shape[-1] != expected_last:
         print(f"  FAIL: output last dim {out.shape[-1]} != {expected_last} classes")
         ok = False
@@ -80,8 +94,30 @@ def test_one(model_dir: Path) -> bool:
         print("  FAIL: output contains non-finite values")
         ok = False
 
+    # The declared output.shape (if present) must match what the graph emits, so
+    # a spec can't advertise a shape the model doesn't produce.
+    if declared_shape is not None and tuple(declared_shape) != tuple(out.shape):
+        print(f"  FAIL: declared output.shape {tuple(declared_shape)} != actual {tuple(out.shape)}")
+        ok = False
+
+    # Task-specific contract checks.
+    if task == "binary":
+        if expected_last != 2:
+            print(f"  FAIL: task 'binary' must declare exactly 2 classes, got {expected_last}")
+            ok = False
+    elif task == "multilabel":
+        # Faithful passthrough with activation 'none' means the graph itself must
+        # emit probabilities; the runtime will not re-squash them.
+        if activation == "none" and not np.all((out >= 0.0) & (out <= 1.0)):
+            print("  FAIL: multilabel activation 'none' but output is outside [0, 1]")
+            ok = False
+    elif task not in ("multiclass", "regression"):
+        print(f"  FAIL: unknown task '{task}'")
+        ok = False
+
     if ok:
         print(f"  - input  {input_shape} (feed name '{feed_name}')")
+        print(f"  - task   '{task}', activation '{activation}'")
         print(f"  - output {tuple(out.shape)} matches {expected_last} classes, all finite")
         print("  PASS")
     return ok

@@ -1,6 +1,6 @@
 {
   "id": "densenet121-cxr-suspicious",
-  "name": "DenseNet121 CXR Suspicious Finding Demo",
+  "name": "DenseNet121 CXR Multi-Label Pathology Demo",
   "version": "1.0.0",
   "certified": false,
   "bodypart": "chest",
@@ -10,7 +10,7 @@
     "format": "onnx"
   },
   "integrity": {
-    "sha256": "e25f0e2155f527727b116673914ef094f4368a035e3d5c70c12100a647c4dc03"
+    "sha256": "6922152cb271babb18d347f792ce2a605e0c90b887ccbbc4f449a3b3a0150fba"
   },
   "input": {
     "shape": [
@@ -30,15 +30,124 @@
     }
   },
   "output": {
+    "task": "multilabel",
     "shape": [
       1,
-      2
+      18
     ],
     "classes": [
-      "No suspicious chest finding",
-      "Possible suspicious chest finding"
+      "Atelectasis",
+      "Consolidation",
+      "Infiltration",
+      "Pneumothorax",
+      "Edema",
+      "Emphysema",
+      "Fibrosis",
+      "Effusion",
+      "Pneumonia",
+      "Pleural_Thickening",
+      "Cardiomegaly",
+      "Nodule",
+      "Mass",
+      "Hernia",
+      "Lung Lesion",
+      "Fracture",
+      "Lung Opacity",
+      "Enlarged Cardiomediastinum"
     ],
-    "activation": "softmax"
+    "activation": "none",
+    "labels": [
+      {
+        "name": "Atelectasis",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Consolidation",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Infiltration",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Pneumothorax",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Edema",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Emphysema",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Fibrosis",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Effusion",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Pneumonia",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Pleural_Thickening",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Cardiomegaly",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Nodule",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Mass",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Hernia",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Lung Lesion",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Fracture",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Lung Opacity",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Enlarged Cardiomediastinum",
+        "threshold": 0.5,
+        "suspicious": true
+      }
+    ]
   },
   "safety": {
     "tier": "screening",
