@@ -144,19 +144,21 @@ surfaced); existing binary models behave exactly as before; `npm run test` green
 
 ### Phase 2 — Export faithfully, stop rewrapping
 
-- [ ] Make passthrough the **default** in
+- [x] Make passthrough the **default** in
   [scripts/export_cxr_suspicious.py](../scripts/export_cxr_suspicious.py):
   emit the model's native multi-label output + a `task: "multilabel"` spec
   listing all pathologies with per-label thresholds.
-- [ ] Keep the binary "suspicious" collapse as an **opt-in** variant
-  (`--view binary`), clearly labelled as a derived view, retaining the
-  logit-correct math already fixed.
-- [ ] Update [scripts/test_onnx.py](../scripts/test_onnx.py) to verify output
+- [x] Keep the binary "suspicious" collapse as an **opt-in** variant
+  (`--view binary`), clearly labelled as a derived view (written to
+  `<slug>-binary/`), retaining the logit-correct math already fixed.
+- [x] Update [scripts/test_onnx.py](../scripts/test_onnx.py) to verify output
   shape matches the declared `task`.
 
 **Exit criteria:** re-exporting `densenet121-cxr-suspicious` /
 `resnet50-cxr-suspicious` yields faithful multi-label models; the binary view is
-reproducible on demand.
+reproducible on demand. ✅ Both re-exported as 18-label models (18 distinct
+probabilities surfaced, none collapsed); `densenet121-cxr-suspicious-binary`
+regenerates the binary view on demand; `test_onnx.py` passes 4/4.
 
 ### Phase 3 — UI renders per task
 
