@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { preprocessImage } from '../preprocess'
 import type { ClaritySpec } from '../types'
 
@@ -61,8 +61,28 @@ describe('preprocessImage — argument validation', () => {
 // ─── Pixel pipeline (mocked DOM) ─────────────────────────────────────────────
 
 describe('preprocessImage — pixel pipeline', () => {
+  let originalSrcDescriptor: PropertyDescriptor | undefined
+
+  beforeEach(() => {
+    global.URL.createObjectURL = vi.fn(() => 'blob:mock-url')
+    global.URL.revokeObjectURL = vi.fn()
+
+    originalSrcDescriptor = Object.getOwnPropertyDescriptor(global.Image.prototype, 'src')
+    Object.defineProperty(global.Image.prototype, 'src', {
+      configurable: true,
+      set(value) {
+        setTimeout(() => {
+          if (this.onload) this.onload()
+        }, 0)
+      },
+    })
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
+    if (originalSrcDescriptor) {
+      Object.defineProperty(global.Image.prototype, 'src', originalSrcDescriptor)
+    }
   })
 
   function buildCanvasMock(pixelData: Uint8ClampedArray) {
@@ -92,8 +112,7 @@ describe('preprocessImage — pixel pipeline', () => {
     }
     buildCanvasMock(pixels)
 
-    // Mock createImageBitmap so it returns a fake ImageBitmap-like object
-    global.createImageBitmap = vi.fn().mockResolvedValue({ width: 4, height: 4 })
+
 
     const file = new File([''], 'test.png', { type: 'image/png' })
     const result = await preprocessImage(file, spec)
@@ -107,7 +126,7 @@ describe('preprocessImage — pixel pipeline', () => {
 
     const pixels = new Uint8ClampedArray(64).fill(200)
     buildCanvasMock(pixels)
-    global.createImageBitmap = vi.fn().mockResolvedValue({ width: 4, height: 4 })
+
 
     const file = new File([''], 'test.png', { type: 'image/png' })
     const result = await preprocessImage(file, spec)
@@ -122,7 +141,7 @@ describe('preprocessImage — pixel pipeline', () => {
 
     const pixels = new Uint8ClampedArray(224 * 224 * 4).fill(128)
     buildCanvasMock(pixels)
-    global.createImageBitmap = vi.fn().mockResolvedValue({ width: 224, height: 224 })
+
 
     const file = new File([''], 'test.png', { type: 'image/png' })
     const result = await preprocessImage(file, spec)
@@ -141,7 +160,7 @@ describe('preprocessImage — pixel pipeline', () => {
 
     const pixels = new Uint8ClampedArray(64).fill(128) // 16 pixels
     buildCanvasMock(pixels)
-    global.createImageBitmap = vi.fn().mockResolvedValue({ width: 4, height: 4 })
+
 
     const file = new File([''], 'test.png', { type: 'image/png' })
     const result = await preprocessImage(file, spec)

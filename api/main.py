@@ -11,6 +11,8 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from pathlib import Path
+
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -180,6 +182,81 @@ def _build_model_summary(model: dict[str, Any], version: dict[str, Any] | None) 
     }
 
 
+def _get_local_manifest() -> dict[str, Any] | None:
+    path = Path(__file__).parent.parent / "public" / "models" / "manifest.json"
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def _get_local_models(
+    *,
+    bodypart: str | None = None,
+    modality: str | None = None,
+    task: str | None = None,
+    validation_status: str | None = None,
+    page: int = 1,
+    limit: int = 20,
+) -> dict[str, Any]:
+    manifest = _get_local_manifest()
+    if not manifest:
+        return {"models": [], "total": 0, "page": page, "limit": limit}
+
+    models = []
+    for slug, entry in manifest.get("models", {}).items():
+        spec_path = Path(__file__).parent.parent / "public" / "models" / slug / "clarity.json"
+        if not spec_path.exists():
+            continue
+        with open(spec_path, "r", encoding="utf-8") as f:
+            spec = json.load(f)
+
+        # Apply filters
+        if bodypart and spec.get("bodypart") != bodypart:
+            continue
+        if modality and spec.get("modality") != modality:
+            continue
+        if task and (spec.get("output", {}).get("task") or "binary") != task:
+            continue
+        if validation_status and (spec.get("thresholds", {}).get("validation_status") or "unvalidated") != validation_status:
+            continue
+
+        # Build summary
+        models.append({
+            "id": spec["id"],
+            "slug": slug,
+            "name": spec["name"],
+            "bodypart": spec.get("bodypart"),
+            "modality": spec.get("modality"),
+            "task": spec.get("output", {}).get("task") or "binary",
+            "validation_status": spec.get("thresholds", {}).get("validation_status") or "unvalidated",
+            "safety_tier": spec.get("safety", {}).get("tier") or "screening",
+            "status": "published",
+            "published_at": None,
+            "current_version": {
+                "id": None,
+                "version": spec.get("version", "1.0.0"),
+                "onnx_url": entry.get("url"),
+                "clarity_url": entry.get("spec_url"),
+                "file_size_mb": None,
+            }
+        })
+
+    # Sort by name or ID (fallback)
+    models.sort(key=lambda m: m["slug"])
+
+    # Pagination
+    offset = (page - 1) * limit
+    paginated = models[offset : offset + limit]
+
+    return {
+        "models": paginated,
+        "total": len(models),
+        "page": page,
+        "limit": limit
+    }
+
+
 async def _get_models_from_db(
     *,
     bodypart: str | None,
@@ -190,7 +267,14 @@ async def _get_models_from_db(
     limit: int,
 ) -> dict[str, Any]:
     if not _supabase_is_configured():
-        raise RuntimeError("Supabase environment variables are missing")
+        return _get_local_models(
+            bodypart=bodypart,
+            modality=modality,
+            task=task,
+            validation_status=validation_status,
+            page=page,
+            limit=limit,
+        )
 
     offset = (page - 1) * limit
     query: dict[str, str] = {
@@ -310,10 +394,8 @@ async def get_manifest(request: Request) -> dict[str, Any]:
     try:
         result = await _get_models_from_db(bodypart=None, modality=None, page=1, limit=50)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "database unavailable", "reason": str(exc)},
-        ) from exc
+        logger.warning("Database unavailable, falling back to local manifest: %s", exc)
+        result = _get_local_models(bodypart=None, modality=None, page=1, limit=50)
 
     models_map: dict[str, dict[str, str]] = {}
     for model in result.get("models", []):

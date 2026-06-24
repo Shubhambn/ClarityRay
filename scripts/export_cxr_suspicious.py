@@ -90,8 +90,13 @@ class ModelDef:
     suspicious_findings: list[str]  # pathology labels to treat as "suspicious"
     channels: int = 1  # 1 = grayscale, 3 = RGB
     input_size: int = 224  # square H == W
-    mean: list[float] = field(default_factory=lambda: [0.5])
-    std: list[float] = field(default_factory=lambda: [0.5])
+    # TorchXRayVision models have Conv weights scaled for raw [0, 255] pixel
+    # values. Passing [-1, 1] normalized input (mean=0.5, std=0.5) makes all
+    # activations ~255× too small for the BN running statistics, collapsing
+    # output to a constant regardless of input image. Pass [0, 255] instead:
+    # (pixel/255 - 0) / (1/255) = pixel.
+    mean: list[float] = field(default_factory=lambda: [0])
+    std: list[float] = field(default_factory=lambda: [0.00392156863])
     bodypart: str = "chest"
     modality: str = "xray"
     version: str = "1.0.0"
@@ -141,6 +146,17 @@ MODEL_REGISTRY: dict[str, ModelDef] = {
         input_size=224,
         family="DenseNet121",
         source_description="TorchXRayVision densenet121-res224-all",
+    ),
+    "densenet121-nih": ModelDef(
+        key="densenet121-nih",
+        slug="densenet121-nih",
+        name="DenseNet121 NIH ChestX-ray14 (14 Pathologies)",
+        loader=_load_torchxrayvision("densenet121-res224-nih"),
+        suspicious_findings=["Mass", "Nodule", "Pneumonia", "Infiltration", "Effusion"],
+        channels=1,
+        input_size=224,
+        family="DenseNet121",
+        source_description="TorchXRayVision densenet121-res224-nih",
     ),
     "resnet50-cxr-suspicious": ModelDef(
         key="resnet50-cxr-suspicious",

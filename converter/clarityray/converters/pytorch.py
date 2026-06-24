@@ -26,7 +26,7 @@ def convert_pytorch(model_path: str, input_shape: tuple, output_path: str) -> st
         raise ConversionError("PyTorch is not installed. Run: pip install clarityray[pytorch]") from exc
 
     try:
-        model = torch.load(model_path, map_location="cpu")
+        model = torch.load(model_path, map_location="cpu", weights_only=False)
         if isinstance(model, OrderedDict):
             raise ConversionError(
                 "This file is a state dict, not a full model. You need to load it into your model class first."
@@ -42,6 +42,7 @@ def convert_pytorch(model_path: str, input_shape: tuple, output_path: str) -> st
             opset_version=17,
             input_names=["input"],
             output_names=["output"],
+            dynamo=False,
         )
         return output_path
     except RuntimeError as exc:

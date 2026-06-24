@@ -131,6 +131,14 @@ export interface ClaritySourceModelSpec {
   selected_findings?: string[];
 }
 
+export interface ClarityExplainabilitySpec {
+  enabled: boolean;
+  method: "occlusion_sensitivity";
+  isModelBased: boolean;
+  isGradCAM: boolean;
+  disclaimer: string;
+}
+
 export interface ClaritySpec {
   id: string;
   name: string;
@@ -145,6 +153,7 @@ export interface ClaritySpec {
   safety: ClaritySafetySpec;
   thresholds: ClarityThresholdsSpec;
   source_model?: ClaritySourceModelSpec;
+  explainability?: ClarityExplainabilitySpec;
 }
 
 function invalid(field: string, problem: string, expected: string): never {
@@ -745,6 +754,33 @@ function parseSourceModelSpec(value: unknown, path: string): ClaritySourceModelS
   };
 }
 
+function parseExplainabilitySpec(value: unknown, path: string): ClarityExplainabilitySpec {
+  if (!isRecord(value)) {
+    invalid(path, typeof value, "object");
+  }
+
+  checkNoExtraKeys(value, ["enabled", "method", "isModelBased", "isGradCAM", "disclaimer"], path);
+
+  const enabled = parseBoolean(requireField(value, "enabled", `${path}.enabled`), `${path}.enabled`);
+  
+  const methodValue = requireField(value, "method", `${path}.method`);
+  if (methodValue !== "occlusion_sensitivity") {
+    invalid(`${path}.method`, `${String(methodValue)}`, '"occlusion_sensitivity"');
+  }
+
+  const isModelBased = parseBoolean(requireField(value, "isModelBased", `${path}.isModelBased`), `${path}.isModelBased`);
+  const isGradCAM = parseBoolean(requireField(value, "isGradCAM", `${path}.isGradCAM`), `${path}.isGradCAM`);
+  const disclaimer = parseNonEmptyString(requireField(value, "disclaimer", `${path}.disclaimer`), `${path}.disclaimer`);
+
+  return {
+    enabled,
+    method: "occlusion_sensitivity",
+    isModelBased,
+    isGradCAM,
+    disclaimer,
+  };
+}
+
 export function validateSpec(json: unknown): ClaritySpec {
   if (!isRecord(json)) {
     invalid("$", typeof json, "object");
@@ -766,6 +802,7 @@ export function validateSpec(json: unknown): ClaritySpec {
       "modality",
       "thresholds",
       "source_model",
+      "explainability",
     ],
     "$"
   );
@@ -800,6 +837,11 @@ export function validateSpec(json: unknown): ClaritySpec {
     ? parseSourceModelSpec(sourceModelValue, "source_model")
     : undefined;
 
+  const explainabilityValue = hasOwn(json, "explainability") ? json["explainability"] : undefined;
+  const explainability = explainabilityValue !== undefined
+    ? parseExplainabilitySpec(explainabilityValue, "explainability")
+    : undefined;
+
   return {
     id,
     name,
@@ -814,5 +856,6 @@ export function validateSpec(json: unknown): ClaritySpec {
     safety,
     thresholds,
     ...(source_model !== undefined ? { source_model } : {}),
+    ...(explainability !== undefined ? { explainability } : {}),
   };
 }

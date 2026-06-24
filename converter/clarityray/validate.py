@@ -49,12 +49,6 @@ def _collect_safety_warnings(spec: dict) -> list[str]:
                 "'No suspicious chest finding' / 'Possible suspicious chest finding'."
             )
 
-    # Binary screening expectation
-    if classes and len(classes) != 2:
-        warnings.append(
-            f"Output has {len(classes)} classes; screening demos are expected to be binary (2)."
-        )
-
     # mean/std length must match channel count
     input_spec = spec.get("input", {}) if isinstance(spec.get("input"), dict) else {}
     shape = input_spec.get("shape") if isinstance(input_spec.get("shape"), list) else None

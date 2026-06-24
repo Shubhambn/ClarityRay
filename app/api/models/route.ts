@@ -6,6 +6,7 @@ import {
   type StaticModelsResponse,
   type StaticModelSummary,
 } from '@/lib/server/staticModels';
+import { fetchModelsFromSupabase } from '@/lib/server/supabase';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
@@ -27,33 +28,40 @@ function staticResponse(req: Request): NextResponse {
   return NextResponse.json(getStaticModels(filtersFromUrl(req.url)));
 }
 
+/** Merge Supabase/backend results with on-disk models not yet registered in the DB. */
+function mergeWithStatic(data: StaticModelsResponse, req: Request): StaticModelsResponse {
+  const backendSlugs = new Set((data.models ?? []).map((m) => m.slug));
+  const extras = getStaticModels(filtersFromUrl(req.url)).models.filter(
+    (m: StaticModelSummary) => !backendSlugs.has(m.slug),
+  );
+  if (extras.length === 0) return data;
+  const models = [...(data.models ?? []), ...extras];
+  return { ...data, models, total: models.length };
+}
+
 export async function GET(req: Request): Promise<NextResponse> {
-  // Degraded/local mode: no backend configured → serve the on-disk catalog.
-  if (!API_BASE) {
-    return staticResponse(req);
+  const filters = filtersFromUrl(req.url);
+
+  // 1) Supabase direct — primary source on all deployed environments.
+  const supabaseData = await fetchModelsFromSupabase(filters);
+  if (supabaseData && supabaseData.models.length > 0) {
+    return NextResponse.json(mergeWithStatic(supabaseData, req));
   }
 
-  try {
-    const search = new URL(req.url).search;
-    const res = await fetch(`${API_BASE}/models${search}`, { cache: 'no-store' });
-    // Backend reachable but unable to serve models (e.g. 503 with no DB) →
-    // fall back to the static catalog so local models still appear.
-    if (!res.ok) {
-      return staticResponse(req);
+  // 2) FastAPI backend (local dev with python backend running).
+  if (API_BASE) {
+    try {
+      const search = new URL(req.url).search;
+      const res = await fetch(`${API_BASE}/models${search}`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = (await res.json()) as StaticModelsResponse;
+        return NextResponse.json(mergeWithStatic(data, req));
+      }
+    } catch {
+      // fall through to static
     }
-    const data = (await res.json()) as StaticModelsResponse;
-    // Union the backend catalog with on-disk models the DB doesn't know about,
-    // so bundled/exported models always appear under /models without a DB seed.
-    const backendSlugs = new Set((data.models ?? []).map((m) => m.slug));
-    const extras = getStaticModels(filtersFromUrl(req.url)).models.filter(
-      (m: StaticModelSummary) => !backendSlugs.has(m.slug),
-    );
-    if (extras.length > 0) {
-      const models = [...(data.models ?? []), ...extras];
-      return NextResponse.json({ ...data, models, total: models.length });
-    }
-    return NextResponse.json(data, { status: res.status });
-  } catch {
-    return staticResponse(req);
   }
+
+  // 3) Static on-disk catalog — always available as final fallback.
+  return staticResponse(req);
 }

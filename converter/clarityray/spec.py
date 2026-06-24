@@ -105,6 +105,8 @@ def generate_spec(
     modality: str,
     version: str = "1.0.0",
     *,
+    task: str = "binary",
+    activation: str | None = None,
     schema: dict[str, Any] | None = None,
     disclaimer: str | None = None,
 ) -> dict[str, Any]:
@@ -135,6 +137,41 @@ def generate_spec(
             fix_hint="Update the classes list or export a model with matching output class count.",
         )
 
+    resolved_activation = activation if activation is not None else ("none" if task == "multilabel" else "softmax")
+
+    if task == "multilabel":
+        output_spec: dict[str, Any] = {
+            "task": "multilabel",
+            "shape": output_shape,
+            "classes": classes,
+            "activation": resolved_activation,
+            "labels": [{"name": c, "threshold": 0.5, "suspicious": True} for c in classes],
+        }
+    elif task == "multiclass":
+        output_spec = {
+            "task": "multiclass",
+            "shape": output_shape,
+            "classes": classes,
+            "activation": resolved_activation,
+            "labels": [
+                {
+                    "name": c,
+                    "suspicious": not any(
+                        term in c.lower()
+                        for term in ("normal", "no finding", "no suspicious", "benign", "healthy", "negative")
+                    ),
+                }
+                for c in classes
+            ],
+        }
+    else:
+        output_spec = {
+            "task": task,
+            "shape": output_shape,
+            "classes": classes,
+            "activation": resolved_activation,
+        }
+
     schema_dict = _load_schema(schema)
     spec: dict[str, Any] = {
         "id": model_id,
@@ -150,11 +187,7 @@ def generate_spec(
             "layout": "NCHW",
             "normalize": _infer_normalization(input_shape),
         },
-        "output": {
-            "shape": output_shape,
-            "classes": classes,
-            "activation": "softmax",
-        },
+        "output": output_spec,
         "safety": {
             "tier": "screening",
             "disclaimer": disclaimer or DEFAULT_DISCLAIMER,

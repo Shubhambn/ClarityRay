@@ -1,0 +1,137 @@
+{
+  "id": "densenet121-nih",
+  "name": "DenseNet121 NIH ChestX-ray14 14 Pathologies",
+  "version": "1.0.0",
+  "certified": false,
+  "bodypart": "chest",
+  "modality": "xray",
+  "model": {
+    "file": "https://huggingface.co/Shub-19/Chest/resolve/main/densenet121-nih/model.onnx",
+    "format": "onnx"
+  },
+  "integrity": {
+    "sha256": "57495ba35e270da7b66bafdb57cbebaff3003493a088df1a0424aca8a93d707a"
+  },
+  "input": {
+    "shape": [
+      1,
+      1,
+      224,
+      224
+    ],
+    "layout": "NCHW",
+    "normalize": {
+      "mean": [
+        0.5
+      ],
+      "std": [
+        0.5
+      ]
+    }
+  },
+  "output": {
+    "task": "multilabel",
+    "shape": [
+      1,
+      14
+    ],
+    "classes": [
+      "Atelectasis",
+      "Cardiomegaly",
+      "Effusion",
+      "Infiltration",
+      "Mass",
+      "Nodule",
+      "Pneumonia",
+      "Pneumothorax",
+      "Consolidation",
+      "Edema",
+      "Emphysema",
+      "Fibrosis",
+      "Pleural_Thickening",
+      "Hernia"
+    ],
+    "activation": "none",
+    "labels": [
+      {
+        "name": "Atelectasis",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Cardiomegaly",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Effusion",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Infiltration",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Mass",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Nodule",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Pneumonia",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Pneumothorax",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Consolidation",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Edema",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Emphysema",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Fibrosis",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Pleural_Thickening",
+        "threshold": 0.5,
+        "suspicious": true
+      },
+      {
+        "name": "Hernia",
+        "threshold": 0.5,
+        "suspicious": true
+      }
+    ]
+  },
+  "safety": {
+    "tier": "screening",
+    "disclaimer": "This is a screening tool. Results require review by a qualified physician."
+  },
+  "thresholds": {
+    "possible_finding": 0.5,
+    "low_confidence": 0.25,
+    "validation_status": "unvalidated"
+  }
+}

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import path from 'path';
 const CHECKS = {
   modelsPageLoadsAndDenseNetCardVisible: 'localhost:3000/models loads and shows DenseNet121 card',
   cardClickNavigatesToSlugPage: 'Click the card → /models/densenet121-chest loads',
@@ -83,7 +84,8 @@ test('manual verification checklist', async ({ page }) => {
   expect(numericLogCount).toBeGreaterThan(0);
   results[CHECKS.logStripShowsRealEvents] = true;
 
-  await page.locator('input[type="file"]').setInputFiles('/home/shubh/Documents/Clarity/uploads/1775066265200-clarityray-test.png');
+  const testImagePath = path.join(process.cwd(), 'uploads', '1775066265200-clarityray-test.png');
+  await page.locator('input[type="file"]').setInputFiles(testImagePath);
 
   await expect(page.getByText('Analyzing...', { exact: false }).first()).toBeVisible({ timeout: 30_000 });
   results[CHECKS.uploadChangesStatusToAnalyzing] = true;

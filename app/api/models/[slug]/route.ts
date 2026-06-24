@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { getStaticModelBySlug } from '@/lib/server/staticModels';
+import { fetchModelBySlugFromSupabase } from '@/lib/server/supabase';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
@@ -21,31 +22,29 @@ export async function GET(
 ): Promise<NextResponse> {
   const { slug } = await params;
 
-  // Degraded/local mode: no backend configured → serve the on-disk model.
-  if (!API_BASE) {
-    return staticResponse(slug);
+  // 1) Supabase direct — primary source on all deployed environments.
+  const supabaseDetail = await fetchModelBySlugFromSupabase(slug);
+  if (supabaseDetail) {
+    return NextResponse.json(supabaseDetail);
   }
 
-  try {
-    const res = await fetch(`${API_BASE}/models/${slug}`, { cache: 'no-store' });
-    // If the backend doesn't have the model (e.g. DB not seeded), fall back to
-    // the on-disk catalog so bundled/exported models always resolve without a
-    // manual DB seed. Only a model absent from BOTH the DB and disk is a real
-    // 404. (Anything else that isn't ok — e.g. 503 — also falls back below.)
-    if (res.status === 404) {
-      const local = getStaticModelBySlug(slug);
-      if (local) {
-        return NextResponse.json(local);
+  // 2) FastAPI backend (local dev with python backend running).
+  if (API_BASE) {
+    try {
+      const res = await fetch(`${API_BASE}/models/${slug}`, { cache: 'no-store' });
+      if (res.status === 404) {
+        const local = getStaticModelBySlug(slug);
+        if (local) return NextResponse.json(local);
+        return NextResponse.json(await res.json(), { status: 404 });
       }
-      const data: unknown = await res.json();
-      return NextResponse.json(data, { status: 404 });
+      if (res.ok) {
+        return NextResponse.json(await res.json(), { status: res.status });
+      }
+    } catch {
+      // fall through to static
     }
-    if (!res.ok) {
-      return staticResponse(slug);
-    }
-    const data: unknown = await res.json();
-    return NextResponse.json(data, { status: res.status });
-  } catch {
-    return staticResponse(slug);
   }
+
+  // 3) Static on-disk catalog — always available as final fallback.
+  return staticResponse(slug);
 }

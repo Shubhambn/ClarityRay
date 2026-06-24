@@ -3,19 +3,26 @@
 import Link from 'next/link';
 import { type ModelSummary } from '@/lib/api/client';
 
-/* ── Types ── */
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface ModelCardProps {
   model: ModelSummary;
+  /** 'bundled' = served from public/models disk, always available offline.
+   *  'remote'  = fetched from backend/Supabase, requires API connectivity.
+   *  undefined = source unknown (legacy callers). */
+  source?: 'bundled' | 'remote';
 }
 
-export default function ModelCard({ model }: ModelCardProps) {
-  const version = model.current_version ? model.current_version.version : null;
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function ModelCard({ model, source }: ModelCardProps) {
+  const version = model.current_version?.version ?? null;
   const bodypart = model.bodypart.toUpperCase();
   const modality = model.modality.toUpperCase();
   const task = (model.task || 'binary').toUpperCase();
   const safetyTier = (model.safety_tier || 'screening').toUpperCase();
   const isValidated = model.validation_status === 'validated';
-  const fileSizeMb = model.current_version ? model.current_version.file_size_mb : null;
+  const fileSizeMb = model.current_version?.file_size_mb ?? null;
 
   return (
     <>
@@ -25,25 +32,41 @@ export default function ModelCard({ model }: ModelCardProps) {
         className="model-card-link"
         aria-label={`View details for ${model.name}`}
       >
-        <article className="panel model-card">
+        <article className={`panel model-card${source === 'bundled' ? ' model-card--bundled' : ''}`}>
+          {/* ── Source tag (top-right corner) ── */}
+          {source && (
+            <div className="model-card__source-tag">
+              {source === 'bundled' ? (
+                <span className="source-tag source-tag--bundled" title="Available offline — no backend required">
+                  📦 BUNDLED
+                </span>
+              ) : (
+                <span className="source-tag source-tag--remote" title="Fetched from backend registry">
+                  ☁ REMOTE
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* ── Name + version ── */}
           <div className="model-card__top">
             <h3 className="model-card__name">{model.name}</h3>
             {version ? (
               <span className="badge badge-muted">v{version}</span>
             ) : (
-              <span className="badge badge-amber">No version uploaded</span>
+              <span className="badge badge-amber">No version</span>
             )}
           </div>
 
+          {/* ── Metadata badges ── */}
           <div className="model-card__meta">
             <span className="badge badge-blue">{bodypart}</span>
             <span className="badge badge-muted">{modality}</span>
             <span className="badge badge-muted">{task}</span>
           </div>
 
+          {/* ── Validation + safety ── */}
           <div className="model-card__status">
-            {/* Validation status is the headline integrity signal — an
-                unvalidated model must never blend in as if it were cleared. */}
             {isValidated ? (
               <span className="badge badge-green">VALIDATED</span>
             ) : (
@@ -53,9 +76,14 @@ export default function ModelCard({ model }: ModelCardProps) {
             <span className="badge badge-muted">NOT DIAGNOSTIC</span>
           </div>
 
+          {/* ── Size + CTA ── */}
           <div className="model-card__bottom">
             {typeof fileSizeMb === 'number' ? (
               <span className="mono model-card__filesize">{`${fileSizeMb.toFixed(1)} MB`}</span>
+            ) : source === 'bundled' ? (
+              <span className="mono model-card__filesize" style={{ color: 'var(--accent-primary)' }}>
+                Cached locally
+              </span>
             ) : (
               <span />
             )}
@@ -67,11 +95,13 @@ export default function ModelCard({ model }: ModelCardProps) {
       <style>{`
         .model-card-link {
           display: block;
+          text-decoration: none;
         }
 
         .model-card {
+          position: relative;
           cursor: pointer;
-          transition: border-color var(--transition-base);
+          transition: border-color var(--transition-base, 0.15s ease);
           display: flex;
           flex-direction: column;
           gap: var(--space-3);
@@ -84,11 +114,51 @@ export default function ModelCard({ model }: ModelCardProps) {
           outline: none;
         }
 
+        .model-card--bundled {
+          border-left: 2px solid rgba(34,197,94,0.35);
+        }
+
+        /* ── Source tag ── */
+        .model-card__source-tag {
+          position: absolute;
+          top: 0;
+          right: 0;
+          padding: 0;
+        }
+
+        .source-tag {
+          display: inline-block;
+          padding: 2px 8px;
+          font-family: var(--font-mono);
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          border-radius: 0 var(--radius-md) 0 var(--radius-sm);
+        }
+
+        .source-tag--bundled {
+          background: rgba(34,197,94,0.12);
+          color: var(--accent-primary);
+          border: 1px solid rgba(34,197,94,0.2);
+          border-top: none;
+          border-right: none;
+        }
+
+        .source-tag--remote {
+          background: rgba(99,102,241,0.12);
+          color: #818cf8;
+          border: 1px solid rgba(99,102,241,0.2);
+          border-top: none;
+          border-right: none;
+        }
+
+        /* ── Card sections ── */
         .model-card__top {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
           gap: var(--space-2);
+          padding-right: 80px; /* space for source-tag */
         }
 
         .model-card__name {

@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 pytorch = ["torch>=2.0"]
 keras = ["tensorflow>=2.12", "tf2onnx>=1.15"]
+hf = ["huggingface_hub>=0.20"]
 
 [project.scripts]
 clarityray = "clarityray.cli:app"

@@ -1,86 +1,196 @@
-"""Upload helpers for converted artifacts."""
+"""Upload helpers: HuggingFace Hub model hosting + Supabase registry."""
+
+from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from .errors import UploadError
 
 
-DEFAULT_SUBMIT_ENDPOINT = "https://clarityray.vercel.app/api/models/submit"
+# ---------------------------------------------------------------------------
+# HuggingFace Hub upload
+# ---------------------------------------------------------------------------
 
+def upload_to_hf(
+    model_path: str,
+    clarity_path: str,
+    slug: str,
+    *,
+    repo_id: str,
+    token: str,
+    private: bool = False,
+) -> dict[str, str]:
+    """Upload model.onnx + clarity.json to a HuggingFace Hub model repo.
 
-def upload_artifact(path: str, url: str, timeout_seconds: float = 30.0) -> int:
-    file_path = Path(path)
-    if not file_path.exists():
-        raise UploadError(
-            message=f"Cannot upload missing file '{path}'.",
-            fix_hint="Run conversion first and confirm the output file exists.",
-        )
-
+    Creates the repository if it does not exist. Returns a dict with keys
+    'model_url', 'clarity_url', and 'repo_url'.
+    """
     try:
-        with file_path.open("rb") as fh:
-            response = httpx.post(url, files={"file": (file_path.name, fh)}, timeout=timeout_seconds)
-        response.raise_for_status()
-        return response.status_code
-    except httpx.HTTPError as exc:
+        from huggingface_hub import HfApi  # type: ignore[import-not-found]
+    except ImportError as exc:
         raise UploadError(
-            message=f"Upload request failed: {exc}",
-            fix_hint="Check the endpoint URL and network access, then retry.",
+            message="huggingface_hub is not installed.",
+            fix_hint="Run: pip install huggingface_hub>=0.20",
         ) from exc
 
-
-def submit(
-    package_dir: str,
-    *,
-    model_path: str | None = None,
-    spec_path: str | None = None,
-    endpoint: str = DEFAULT_SUBMIT_ENDPOINT,
-    timeout_seconds: float = 30.0,
-) -> str:
-    """Submit a packaged model directory and return a model URL."""
-    base = Path(package_dir)
-    resolved_model = Path(model_path) if model_path is not None else base / "model.onnx"
-    resolved_spec = Path(spec_path) if spec_path is not None else base / "clarity.json"
-
-    if not resolved_model.exists():
-        raise UploadError(
-            message=f"Cannot submit package: missing model file '{resolved_model}'.",
-            fix_hint="Generate package files first so model.onnx exists in the output directory.",
-        )
-    if not resolved_spec.exists():
-        raise UploadError(
-            message=f"Cannot submit package: missing spec file '{resolved_spec}'.",
-            fix_hint="Generate package files first so clarity.json exists in the output directory.",
-        )
+    api = HfApi(token=token)
 
     try:
-        with resolved_model.open("rb") as model_fh, resolved_spec.open("rb") as spec_fh:
-            response = httpx.post(
-                endpoint,
-                files={
-                    "model": (resolved_model.name, model_fh, "application/octet-stream"),
-                    "spec": (resolved_spec.name, spec_fh, "application/json"),
-                },
+        api.create_repo(repo_id=repo_id, repo_type="model", exist_ok=True, private=private)
+    except Exception as exc:
+        raise UploadError(
+            message=f"Could not create HuggingFace repository '{repo_id}': {exc}",
+            fix_hint="Check your token has write access and the repo name is valid (owner/repo-name).",
+        ) from exc
+
+    model_hf_path = f"{slug}/model.onnx"
+    clarity_hf_path = f"{slug}/clarity.json"
+
+    try:
+        api.upload_file(
+            path_or_fileobj=model_path,
+            path_in_repo=model_hf_path,
+            repo_id=repo_id,
+            repo_type="model",
+            commit_message=f"Add {slug} model via ClarityRay converter",
+        )
+        api.upload_file(
+            path_or_fileobj=clarity_path,
+            path_in_repo=clarity_hf_path,
+            repo_id=repo_id,
+            repo_type="model",
+            commit_message=f"Add {slug} clarity.json via ClarityRay converter",
+        )
+    except Exception as exc:
+        raise UploadError(
+            message=f"HuggingFace upload failed: {exc}",
+            fix_hint="Check your token, network connection, and available storage quota.",
+        ) from exc
+
+    base = f"https://huggingface.co/{repo_id}/resolve/main"
+    return {
+        "model_url": f"{base}/{model_hf_path}",
+        "clarity_url": f"{base}/{clarity_hf_path}",
+        "repo_url": f"https://huggingface.co/{repo_id}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Supabase registry
+# ---------------------------------------------------------------------------
+
+def register_in_supabase(
+    spec: dict[str, Any],
+    *,
+    model_url: str,
+    clarity_url: str,
+    supabase_url: str,
+    supabase_key: str,
+    timeout_seconds: float = 30.0,
+) -> str:
+    """Upsert model + model_versions rows in Supabase. Returns the model UUID.
+
+    Schema mirrors 001_create_models.sql (slug, name, description, modality,
+    bodypart, status) + 005_model_task_validation.sql (task, validation_status,
+    safety_tier) + model_versions (model_id, version, clarity_url, model_url).
+    """
+    # --- fields from 001_create_models.sql ---
+    slug: str = spec.get("id", "unknown")
+    name: str = spec.get("name", slug)
+    description: str | None = spec.get("description")          # nullable in 001
+    modality: str | None = spec.get("modality")
+    bodypart: str | None = spec.get("bodypart")
+    # status: always 'published' when registered via the converter
+    status = "published"
+
+    # --- fields from 005_model_task_validation.sql ---
+    output = spec.get("output") or {}
+    task: str = output.get("task") or "binary"
+    thresholds = spec.get("thresholds") or {}
+    validation_status: str = thresholds.get("validation_status") or "unvalidated"
+    safety = spec.get("safety") or {}
+    safety_tier: str = safety.get("tier") or "screening"
+
+    # --- model_versions fields from 001_create_models.sql ---
+    version: str = spec.get("version") or "1.0.0"
+    # clarity_url and model_url come from the caller (HF URLs)
+
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=representation",
+    }
+    base = supabase_url.rstrip("/") + "/rest/v1"
+
+    try:
+        # 1) Upsert models row — exact columns from 001 + 005 migrations
+        models_payload: dict[str, Any] = {
+            "slug": slug,
+            "name": name,
+            "modality": modality,
+            "bodypart": bodypart,
+            "status": status,
+            # 005 additions
+            "task": task,
+            "validation_status": validation_status,
+            "safety_tier": safety_tier,
+        }
+        if description is not None:
+            models_payload["description"] = description
+
+        resp = httpx.post(
+            f"{base}/models?on_conflict=slug",
+            headers=headers,
+            json=[models_payload],
+            timeout=timeout_seconds,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+
+        if not rows:
+            # Proxy stripped response body — fall back to a lookup
+            fetch = httpx.get(
+                f"{base}/models",
+                headers={**headers, "Prefer": ""},
+                params={"slug": f"eq.{slug}", "select": "id,slug", "limit": "1"},
                 timeout=timeout_seconds,
             )
-        response.raise_for_status()
+            fetch.raise_for_status()
+            rows = fetch.json()
 
-        try:
-            payload = response.json()
-        except ValueError:
-            payload = {}
+        model_id: str = rows[0]["id"]
 
-        if isinstance(payload, dict) and isinstance(payload.get("url"), str) and payload["url"].strip():
-            return payload["url"].strip()
+        # 2) Upsert model_versions row
+        ver_resp = httpx.post(
+            f"{base}/model_versions?on_conflict=model_id,version",
+            headers={**headers, "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json=[{
+                "model_id": model_id,
+                "version": version,
+                "clarity_url": clarity_url,
+                "model_url": model_url,
+            }],
+            timeout=timeout_seconds,
+        )
+        ver_resp.raise_for_status()
+        return model_id
 
-        location = response.headers.get("location") or response.headers.get("Location")
-        if location:
-            return location
-
-        return f"https://clarityray.vercel.app/models/{resolved_model.stem}-v1"
-    except httpx.HTTPError as exc:
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:300]
         raise UploadError(
-            message=f"Submission failed: {exc}",
-            fix_hint="Check your internet connection and try again with --no-upload for local packaging.",
+            message=f"Supabase registration failed ({exc.response.status_code}): {detail}",
+            fix_hint=(
+                "Ensure SUPABASE_KEY is a service_role key (not publishable) with insert/update rights, "
+                "and that migration 005_model_task_validation.sql has been applied."
+            ),
+        ) from exc
+    except httpx.RequestError as exc:
+        raise UploadError(
+            message=f"Supabase connection error: {exc}",
+            fix_hint="Check SUPABASE_URL is correct and you have network access.",
+
         ) from exc

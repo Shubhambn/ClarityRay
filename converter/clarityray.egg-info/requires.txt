@@ -4,6 +4,9 @@ onnxruntime>=1.16
 jsonschema>=4.0
 httpx>=0.24
 
+[hf]
+huggingface_hub>=0.20
+
 [keras]
 tensorflow>=2.12
 tf2onnx>=1.15

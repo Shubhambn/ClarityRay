@@ -91,12 +91,12 @@ export default function AnalysisPage() {
 
   const [imageURL, setImageURL] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [heatmapMode, setHeatmapMode] = useState<'model' | 'contrast' | 'none'>('contrast');
   const [showOverlay, setShowOverlay] = useState(true);
   const [mounted, setMounted] = useState<boolean>(false);
   const [consented, setConsented] = useState<boolean>(false);
   const [personaBannerDismissed, setPersonaBannerDismissed] = useState<boolean>(false);
-  const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
+  const [contrastHeatmap, setContrastHeatmap] = useState<HeatmapData | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -163,18 +163,18 @@ export default function AnalysisPage() {
       try {
         const generated = generateHeatmap(sourceImage, abnormalConfidence);
         if (!cancelled) {
-          setHeatmap(generated);
+          setContrastHeatmap(generated);
         }
       } catch {
         if (!cancelled) {
-          setHeatmap(null);
+          setContrastHeatmap(null);
         }
       }
     };
 
     sourceImage.onerror = () => {
       if (!cancelled) {
-        setHeatmap(null);
+        setContrastHeatmap(null);
       }
     };
 
@@ -192,9 +192,9 @@ export default function AnalysisPage() {
 
     setSelectedFile(file);
     setImageURL(URL.createObjectURL(file));
-    setShowHeatmap(false);
+    setHeatmapMode(hook.modelInfo?.explainability?.enabled ? 'model' : 'contrast');
     setShowOverlay(true);
-    setHeatmap(null);
+    setContrastHeatmap(null);
     void hook.runAnalysis(file);
   };
 
@@ -205,7 +205,14 @@ export default function AnalysisPage() {
 
   const showPersonaBanner = consented && persona === null && !personaBannerDismissed;
   const modelVersion = hook.modelInfo?.version ? `v${hook.modelInfo.version}` : null;
-  const hasHeatmap = heatmap !== null;
+  const modelHeatmap = hook.explanationResult;
+  const activeHeatmap =
+    heatmapMode === 'model'
+      ? modelHeatmap
+      : heatmapMode === 'contrast'
+        ? contrastHeatmap
+        : null;
+  const hasHeatmap = activeHeatmap !== null;
 
   // Spatial tasks (segmentation / detection) render their real output over the
   // scan via a canvas overlay instead of the contrast heatmap.
@@ -264,7 +271,7 @@ export default function AnalysisPage() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-          <span className="dot-green" aria-hidden="true" />
+          <span className={getDotClass(hook.status)} aria-hidden="true" />
           <span>{hook.modelInfo?.name ?? 'Loading model...'}</span>
         </div>
         <div>{modelVersion ?? '—'}</div>
@@ -550,21 +557,75 @@ export default function AnalysisPage() {
                 </div>
               )}
 
-              {hook.status === 'complete' && hasHeatmap && !hasSpatialOverlay && (
-                <button
-                  type="button"
-                  className="badge badge-green"
+              {hook.status === 'complete' && !hasSpatialOverlay && (
+                <div
                   style={{
                     position: 'absolute',
                     top: '10px',
                     right: '10px',
-                    cursor: 'pointer',
                     zIndex: 20,
+                    display: 'flex',
+                    gap: '6px',
+                    background: 'rgba(0, 0, 0, 0.65)',
+                    padding: '4px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-subtle)',
                   }}
-                  onClick={() => setShowHeatmap((prev) => !prev)}
                 >
-                  {showHeatmap ? 'Show Original' : 'Show Heatmap'}
-                </button>
+                  {hook.modelInfo?.explainability?.enabled && (
+                    <button
+                      type="button"
+                      className="mono"
+                      style={{
+                        background: heatmapMode === 'model' ? 'var(--accent-primary)' : 'transparent',
+                        color: heatmapMode === 'model' ? 'var(--bg-base)' : 'var(--text-secondary)',
+                        border: 'none',
+                        borderRadius: 'var(--radius-xs)',
+                        padding: '2px 8px',
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => setHeatmapMode('model')}
+                    >
+                      Model Heatmap
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="mono"
+                    style={{
+                      background: heatmapMode === 'contrast' ? 'var(--accent-primary)' : 'transparent',
+                      color: heatmapMode === 'contrast' ? 'var(--bg-base)' : 'var(--text-secondary)',
+                      border: 'none',
+                      borderRadius: 'var(--radius-xs)',
+                      padding: '2px 8px',
+                      fontSize: '10px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => setHeatmapMode('contrast')}
+                  >
+                    Contrast Overlay
+                  </button>
+                  <button
+                    type="button"
+                    className="mono"
+                    style={{
+                      background: heatmapMode === 'none' ? 'var(--accent-primary)' : 'transparent',
+                      color: heatmapMode === 'none' ? 'var(--bg-base)' : 'var(--text-secondary)',
+                      border: 'none',
+                      borderRadius: 'var(--radius-xs)',
+                      padding: '2px 8px',
+                      fontSize: '10px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => setHeatmapMode('none')}
+                  >
+                    Original
+                  </button>
+                </div>
               )}
 
               {hasSpatialOverlay && (
@@ -601,7 +662,7 @@ export default function AnalysisPage() {
                 </div>
               )}
 
-              {showHeatmap && hasHeatmap && (
+              {heatmapMode !== 'none' && activeHeatmap !== null && (
                 <div
                   style={{
                     position: 'absolute',
@@ -614,7 +675,48 @@ export default function AnalysisPage() {
                     zIndex: 15,
                   }}
                 >
-                  <ContrastViewer embedded imageUrl={imageURL} heatmap={heatmap ?? undefined} className="w-full h-full" />
+                  <ContrastViewer embedded imageUrl={imageURL} heatmap={activeHeatmap} />
+                </div>
+              )}
+
+              {hook.explanationActive && hook.explanationProgress !== null && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: '20px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: 'rgba(0, 0, 0, 0.85)',
+                    border: '1px solid var(--border-accent)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--sp-2) var(--sp-4)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 'var(--sp-3)',
+                    zIndex: 30,
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+                  }}
+                >
+                  <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                  <span className="mono" style={{ fontSize: '11px', color: 'var(--text-primary)' }}>
+                    Generating model explanation... {hook.explanationProgress}%
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-danger mono"
+                    style={{
+                      padding: '2px 8px',
+                      fontSize: '10px',
+                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--status-danger)',
+                      cursor: 'pointer',
+                    }}
+                    onClick={hook.cancelExplanation}
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
 
@@ -648,6 +750,12 @@ export default function AnalysisPage() {
             error={hook.error}
             logs={hook.logs}
             onReset={hook.reset}
+            explainabilityEnabled={hook.modelInfo?.explainability?.enabled}
+            explanationMethod={hook.modelInfo?.explainability?.method}
+            explanationDisclaimer={hook.modelInfo?.explainability?.disclaimer}
+            explanationActive={hook.explanationActive}
+            explanationProgress={hook.explanationProgress}
+            heatmapMode={heatmapMode}
           />
         </section>
 

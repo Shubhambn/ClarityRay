@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -8,6 +10,8 @@ from pydantic import BaseModel, HttpUrl
 
 from api.main import (
     _build_model_summary,
+    _get_local_manifest,
+    _get_local_models,
     _get_models_from_db,
     _supabase_is_configured,
     _supabase_request,
@@ -94,8 +98,53 @@ async def _get_model_detail_from_db(slug: str) -> dict[str, Any] | None:
     return base
 
 
+def _get_local_model_detail(slug: str) -> dict[str, Any] | None:
+    manifest = _get_local_manifest()
+    if not manifest or slug not in manifest.get("models", {}):
+        return None
+
+    entry = manifest["models"][slug]
+    spec_path = Path(__file__).parent.parent.parent / "public" / "models" / slug / "clarity.json"
+    if not spec_path.exists():
+        return None
+
+    with open(spec_path, "r", encoding="utf-8") as f:
+        spec = json.load(f)
+
+    base = {
+        "id": spec["id"],
+        "slug": slug,
+        "name": spec["name"],
+        "bodypart": spec.get("bodypart"),
+        "modality": spec.get("modality"),
+        "task": spec.get("output", {}).get("task") or "binary",
+        "validation_status": spec.get("thresholds", {}).get("validation_status") or "unvalidated",
+        "safety_tier": spec.get("safety", {}).get("tier") or "screening",
+        "status": "published",
+        "published_at": None,
+        "current_version": {
+            "id": None,
+            "version": spec.get("version", "1.0.0"),
+            "onnx_url": entry.get("url"),
+            "clarity_url": entry.get("spec_url"),
+            "file_size_mb": None,
+        }
+    }
+    base["current_version"]["is_current"] = True
+    base["validation"] = _build_validation_payload(base)
+    return base
+
+
 async def _get_model_detail(slug: str) -> dict[str, Any] | None:
-    return await _get_model_detail_from_db(slug)
+    try:
+        detail = await _get_model_detail_from_db(slug)
+        if detail is not None:
+            return detail
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logger = logging.getLogger("clarityray.api")
+        logger.warning("Database unavailable, falling back to local model detail for %s: %s", slug, exc)
+    return _get_local_model_detail(slug)
 
 
 @router.get("")
@@ -119,23 +168,23 @@ async def get_models(
             limit=limit,
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "database unavailable", "reason": str(exc)},
-        ) from exc
+        import logging
+        logger = logging.getLogger("clarityray.api")
+        logger.warning("Database unavailable, falling back to local models list: %s", exc)
+        return _get_local_models(
+            bodypart=bodypart,
+            modality=modality,
+            task=task,
+            validation_status=validation_status,
+            page=page,
+            limit=limit,
+        )
 
 
 @router.get("/{slug}")
 @limiter.limit("100/minute")
 async def get_model_by_slug(request: Request, slug: str) -> dict[str, Any]:
-    try:
-        detail = await _get_model_detail(slug)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "database unavailable", "reason": str(exc)},
-        ) from exc
-
+    detail = await _get_model_detail(slug)
     if not detail:
         return JSONResponse(status_code=404, content={"error": "Model not found", "slug": slug})
     return detail
@@ -144,14 +193,7 @@ async def get_model_by_slug(request: Request, slug: str) -> dict[str, Any]:
 @router.get("/{slug}/status")
 @limiter.limit("100/minute")
 async def get_model_status(request: Request, slug: str) -> dict[str, Any]:
-    try:
-        detail = await _get_model_detail(slug)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error": "database unavailable", "reason": str(exc)},
-        ) from exc
-
+    detail = await _get_model_detail(slug)
     if not detail:
         return JSONResponse(status_code=404, content={"error": "Model not found", "slug": slug})
 

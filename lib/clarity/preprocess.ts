@@ -32,14 +32,6 @@ function decodeFileToImageElement(file: File): Promise<HTMLImageElement> {
 }
 
 async function decodeImage(file: File): Promise<CanvasImageSource> {
-  if (typeof createImageBitmap === "function") {
-    try {
-      return await createImageBitmap(file);
-    } catch {
-      // Fall through to HTMLImageElement decode path.
-    }
-  }
-
   return decodeFileToImageElement(file);
 }
 
