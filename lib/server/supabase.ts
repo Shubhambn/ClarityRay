@@ -28,7 +28,7 @@ export function isSupabaseConfigured(): boolean {
 // Raw DB row types (matching migrations exactly)
 // ---------------------------------------------------------------------------
 
-/** model_versions row from 001_create_models.sql */
+/** model_versions row from 001_create_models.sql + 006_clarity_spec_json.sql */
 interface DbModelVersion {
   id: string;
   model_id?: string;
@@ -36,6 +36,8 @@ interface DbModelVersion {
   clarity_url: string;
   model_url: string;      // stored as model_url; FE type calls it onnx_url
   created_at: string;
+  /** Full clarity.json stored as JSONB (migration 006). Null on older rows. */
+  spec_json?: unknown;
 }
 
 /** models row from 001 + 005 migrations. 005 columns are optional — they may
@@ -60,20 +62,20 @@ interface DbModel {
 // Select clauses
 // ---------------------------------------------------------------------------
 
-/** Full select — requires migration 005 columns to exist. */
+/** Full select — requires migration 005 + 006 columns to exist. */
 const MODEL_SELECT_FULL = [
   'id', 'slug', 'name', 'description',
   'bodypart', 'modality', 'status',
   'task', 'validation_status', 'safety_tier',
   'created_at',
-  'model_versions(id,version,clarity_url,model_url,created_at)',
+  'model_versions(id,version,clarity_url,model_url,spec_json,created_at)',
 ].join(',');
 
 /** Base select — works without migration 005 (task/validation/safety omitted). */
 const MODEL_SELECT_BASE = [
   'id', 'slug', 'name', 'description',
   'bodypart', 'modality', 'status', 'created_at',
-  'model_versions(id,version,clarity_url,model_url,created_at)',
+  'model_versions(id,version,clarity_url,model_url,spec_json,created_at)',
 ].join(',');
 
 // ---------------------------------------------------------------------------
@@ -252,6 +254,38 @@ export async function fetchModelBySlugFromSupabase(
     const rows = await fetchModelRows(params);
     if (!rows || rows.length === 0) return null;
     return toModelDetail(rows[0]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the spec_json (full clarity.json) for a published model's latest
+ * version from Supabase (migration 006).
+ *
+ * Returns the raw JSONB object when present, null otherwise.
+ * Callers should pass the result to validateSpec() before use.
+ */
+export async function fetchSpecFromSupabase(slug: string): Promise<unknown | null> {
+  if (!isSupabaseConfigured()) return null;
+
+  const params = new URLSearchParams();
+  params.set('slug', `eq.${slug}`);
+  params.set('status', 'eq.published');
+  params.set('limit', '1');
+
+  try {
+    const rows = await fetchModelRows(params);
+    if (!rows || rows.length === 0) return null;
+
+    const versions = [...(rows[0].model_versions ?? [])].sort(
+      (a, b) => b.created_at.localeCompare(a.created_at),
+    );
+    const latest = versions[0];
+    if (!latest) return null;
+
+    // spec_json is populated by migration 006 + seed; may be null on old rows.
+    return latest.spec_json ?? null;
   } catch {
     return null;
   }
