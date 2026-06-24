@@ -15,14 +15,17 @@ const DEFAULT_DISCLAIMER =
 
 function getTierStyles(tier: SafeResult['safetyTier']): string {
   if (tier === 'possible_finding') return 'bg-red-500/15 text-red-200 border border-red-500/40';
-  if (tier === 'low_confidence') return 'bg-yellow-500/15 text-yellow-200 border border-yellow-500/40';
   return 'bg-emerald-500/15 text-emerald-200 border border-emerald-500/40';
 }
 
 function getTierBadgeClass(tier: SafeResult['safetyTier']): string {
   if (tier === 'possible_finding') return 'border-red-500/50 bg-red-950/50 text-red-200';
-  if (tier === 'low_confidence') return 'border-amber-500/50 bg-amber-950/40 text-amber-100';
   return 'border-emerald-500/50 bg-emerald-950/40 text-emerald-100';
+}
+
+function displayTier(tier: SafeResult['safetyTier']): string {
+  const label = tier === 'low_confidence' ? 'no_finding' : tier;
+  return label.replace('_', ' ');
 }
 
 export function ResultsPanel({
@@ -105,7 +108,7 @@ export function ResultsPanel({
           </div>
 
           <div className={`rounded-lg px-3 py-2 text-sm font-medium ${getTierStyles(result.safetyTier)}`}>
-            Safety tier: {result.safetyTier.replace('_', ' ')}
+            Safety tier: {displayTier(result.safetyTier)}
           </div>
 
           <div className="rounded-lg border border-white/10 bg-black/25 p-3 text-sm leading-relaxed text-zinc-200">

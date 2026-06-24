@@ -8,7 +8,7 @@ export type HeatmapData = {
   values: Float32Array;
   width: number;
   height: number;
-  method: "contrast_attention_v1";
+  method: "contrast_attention_v1" | "occlusion_sensitivity";
 };
 
 export type ClarityRayResult = {
@@ -175,6 +175,16 @@ export function translateResults(
   assert(classes.length >= 2, "translateResults requires at least two classes.");
   assert(probabilities.length >= 2, "translateResults requires at least two probabilities.");
 
+  // Guard: classes[1] must be the finding/positive class. A spec with inverted class
+  // order (e.g. ["Pneumonia", "Normal"]) silently flips every result with no error.
+  const findingLabel = classes[1] ?? "";
+  if (/\b(normal|no.?finding|negative|healthy)\b/i.test(findingLabel)) {
+    throw new Error(
+      `Binary class order looks inverted: classes[1] is "${findingLabel}". ` +
+      `classes[0] must be the negative/normal class, classes[1] the finding class.`
+    );
+  }
+
   const findingProb = probabilities[1];
   const normalProb = probabilities[0];
 
@@ -199,6 +209,8 @@ export function translateResults(
         "Please consult a licensed physician immediately. " +
         "Do not take medical action based on this result alone.",
       classProbabilities,
+      task: "binary",
+      findings: [{ label: classes[1], probability: findingProb, suspicious: true }],
     };
   }
 
@@ -214,6 +226,8 @@ export function translateResults(
         "ℹ Inconclusive result. Image quality, patient positioning, or model limitations " +
         "may affect accuracy. Consult a physician if you have clinical concerns.",
       classProbabilities,
+      task: "binary",
+      findings: [{ label: classes[1], probability: findingProb, suspicious: true }],
     };
   }
 
@@ -228,6 +242,8 @@ export function translateResults(
       "ℹ No finding detected. This does not mean the image is clinically normal. " +
       "AI screening tools have limitations. Always consult a physician for clinical evaluation.",
     classProbabilities,
+    task: "binary",
+    findings: [],
   };
 }
 
@@ -427,11 +443,11 @@ export function interpretMulticlass(probabilities: number[], spec: ClaritySpec):
   }
 
   return {
-    primaryFinding: topLabel,
+    primaryFinding: "Below reporting threshold",
     confidencePercent,
     safetyTier: "no_finding",
     plainSummary:
-      `The AI's top class "${topLabel}" scored below the reporting threshold. ` +
+      `The AI's top class "${topLabel}" did not reach the confidence threshold. ` +
       "A negative AI result does not rule out disease.",
     disclaimer:
       "ℹ No finding detected. This does not mean the image is clinically normal. " +
@@ -623,14 +639,18 @@ export function interpretSegmentation(values: number[], spec: ClaritySpec): Safe
   }
 
   return {
-    primaryFinding: "No region segmented",
-    confidencePercent: 0,
+    primaryFinding: present.length > 0
+      ? `${present[0].label} (no suspicious region)`
+      : "No region segmented",
+    confidencePercent: present.length > 0 ? Math.round(present[0].coverage * 100) : 0,
     safetyTier: "no_finding",
-    plainSummary:
-      "No region of interest crossed the segmentation threshold. " +
-      "A negative AI result does not rule out disease.",
+    plainSummary: present.length > 0
+      ? `The AI segmented tissue ("${present[0].label}") but found no suspicious regions. ` +
+        "A negative AI result does not rule out disease."
+      : "No region of interest crossed the segmentation threshold. " +
+        "A negative AI result does not rule out disease.",
     disclaimer:
-      "ℹ No region segmented. This does not mean the image is clinically normal. " +
+      "ℹ No suspicious region detected. This does not mean the image is clinically normal. " +
       "AI tools have limitations. Always consult a physician for clinical evaluation.",
     classProbabilities,
     task: "segmentation",

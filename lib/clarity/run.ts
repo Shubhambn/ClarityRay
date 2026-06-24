@@ -16,9 +16,13 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void }
 // ─── Worker singleton ───────────────────────────────────────────────────────
 
 const loadedModels = new Set<string>()
+const _fallbackUrls = new Map<string, string>()
 const pending = new Map<string, Pending>()
 let _worker: Worker | null = null
 let _workerDead = false
+let _workerRestartAttempts = 0
+const WORKER_MAX_RESTARTS = 3
+const WORKER_RESTART_BACKOFF_MS = [1_000, 2_000, 4_000] as const
 
 function getWorker(): Worker | null {
   if (_workerDead) return null
@@ -49,6 +53,15 @@ function getWorker(): Worker | null {
       const err = new Error(`Inference worker crashed: ${ev.message ?? 'unknown error'}`)
       for (const p of pending.values()) p.reject(err)
       pending.clear()
+      // New worker has no sessions; callers must reload models after restart.
+      loadedModels.clear()
+      // Restart with exponential backoff up to WORKER_MAX_RESTARTS; beyond that,
+      // all inference falls through to the main-thread path permanently.
+      if (_workerRestartAttempts < WORKER_MAX_RESTARTS) {
+        const delay = WORKER_RESTART_BACKOFF_MS[_workerRestartAttempts] ?? 4_000
+        _workerRestartAttempts++
+        setTimeout(() => { _workerDead = false }, delay)
+      }
     }
 
     return _worker
@@ -96,8 +109,13 @@ function getModelFileName(file: string): string {
 export async function loadModelInWorker(
   modelBuffer: ArrayBuffer,
   specId: string,
+  modelUrl?: string,
 ): Promise<void> {
   if (loadedModels.has(specId)) return
+
+  if (modelUrl) {
+    _fallbackUrls.set(specId, modelUrl)
+  }
 
   const worker = getWorker()
 
@@ -108,10 +126,13 @@ export async function loadModelInWorker(
       const msg: WorkerIn = { type: 'LOAD_MODEL', id, specId, modelBuffer }
       worker.postMessage(msg, [modelBuffer])
     })
+    // Only mark loaded after the worker acknowledges; when worker is dead the model
+    // is loaded on demand by runInferenceMainThread during the first inference call.
+    loadedModels.add(specId)
   }
-  // Whether via worker or fallback path, mark as loaded so hasSession returns true
-  loadedModels.add(specId)
 }
+
+const INFERENCE_TIMEOUT_MS = 60_000
 
 /**
  * Run inference on the worker thread. Falls back to the main thread only if
@@ -143,7 +164,14 @@ export async function runInference(
     const copy = imageData.slice()
 
     return new Promise<Float32Array>((resolve, reject) => {
-      pending.set(id, { resolve: resolve as Pending['resolve'], reject })
+      const timeoutId = setTimeout(() => {
+        pending.delete(id)
+        reject(new Error(`Inference timed out after ${INFERENCE_TIMEOUT_MS / 1000}s.`))
+      }, INFERENCE_TIMEOUT_MS)
+      pending.set(id, {
+        resolve: (v) => { clearTimeout(timeoutId); resolve(v as Float32Array) },
+        reject: (e) => { clearTimeout(timeoutId); reject(e) },
+      })
       const msg: WorkerIn = {
         type: 'RUN_INFERENCE',
         id,
@@ -177,7 +205,8 @@ async function runInferenceMainThread(
   let session = _fallbackSessions.get(spec.id)
   if (!session) {
     const modelFile = getModelFileName(spec.model.file)
-    const modelPath = `/models/${spec.id}/${modelFile}`
+    const storedUrl = _fallbackUrls.get(spec.id)
+    const modelPath = storedUrl ?? `/models/${spec.id}/${modelFile}`
     session = await ort.InferenceSession.create(modelPath)
     _fallbackSessions.set(spec.id, session)
   }
