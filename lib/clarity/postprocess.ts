@@ -175,12 +175,21 @@ export function translateResults(
   assert(classes.length >= 2, "translateResults requires at least two classes.");
   assert(probabilities.length >= 2, "translateResults requires at least two probabilities.");
 
-  // Guard: classes[1] must be the finding/positive class. A spec with inverted class
-  // order (e.g. ["Pneumonia", "Normal"]) silently flips every result with no error.
+  // Guard: classes[0] must be the negative class, classes[1] the finding/positive class.
+  // A spec with inverted order (e.g. ["Pneumonia", "Normal"]) silently flips every result.
+  const normalLabel = classes[0] ?? "";
   const findingLabel = classes[1] ?? "";
-  if (/\b(normal|no.?finding|negative|healthy)\b/i.test(findingLabel)) {
+
+  if (/\b(normal|no.?finding|negative|healthy|clear|benign)\b/i.test(findingLabel)) {
     throw new Error(
       `Binary class order looks inverted: classes[1] is "${findingLabel}". ` +
+      `classes[0] must be the negative/normal class, classes[1] the finding class.`
+    );
+  }
+
+  if (/\b(cancer|tumor|tumour|mass|nodule|suspicious|malignant|pneumonia|finding)\b/i.test(normalLabel)) {
+    throw new Error(
+      `Binary class order looks inverted: classes[0] is "${normalLabel}" which looks like a finding class. ` +
       `classes[0] must be the negative/normal class, classes[1] the finding class.`
     );
   }

@@ -91,7 +91,7 @@ export default function AnalysisPage() {
 
   const [imageURL, setImageURL] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [heatmapMode, setHeatmapMode] = useState<'model' | 'contrast' | 'none'>('contrast');
+  const [heatmapMode, setHeatmapMode] = useState<'model' | 'contrast' | 'none'>('model');
   const [showOverlay, setShowOverlay] = useState(true);
   const [mounted, setMounted] = useState<boolean>(false);
   const [consented, setConsented] = useState<boolean>(false);
@@ -192,7 +192,7 @@ export default function AnalysisPage() {
 
     setSelectedFile(file);
     setImageURL(URL.createObjectURL(file));
-    setHeatmapMode(hook.modelInfo?.explainability?.enabled ? 'model' : 'contrast');
+    setHeatmapMode('model');
     setShowOverlay(true);
     setContrastHeatmap(null);
     void hook.runAnalysis(file);
@@ -206,9 +206,11 @@ export default function AnalysisPage() {
   const showPersonaBanner = consented && persona === null && !personaBannerDismissed;
   const modelVersion = hook.modelInfo?.version ? `v${hook.modelInfo.version}` : null;
   const modelHeatmap = hook.explanationResult;
+  // When mode is 'model' but the occlusion heatmap hasn't finished computing yet,
+  // fall back to the contrast heatmap so the scan is never left blank.
   const activeHeatmap =
     heatmapMode === 'model'
-      ? modelHeatmap
+      ? (modelHeatmap ?? contrastHeatmap)
       : heatmapMode === 'contrast'
         ? contrastHeatmap
         : null;
@@ -748,7 +750,6 @@ export default function AnalysisPage() {
             result={hook.result}
             modelInfo={hook.modelInfo}
             error={hook.error}
-            logs={hook.logs}
             onReset={hook.reset}
             explainabilityEnabled={hook.modelInfo?.explainability?.enabled}
             explanationMethod={hook.modelInfo?.explainability?.method}

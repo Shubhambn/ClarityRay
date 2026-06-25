@@ -182,6 +182,13 @@ SELECT
       "family": "DenseNet121",
       "source": "TorchXRayVision densenet121-res224-all (binary suspicious-finding view)",
       "selected_findings": ["Mass", "Nodule", "Lung Opacity", "Lung Lesion"]
+    },
+    "explainability": {
+      "enabled": true,
+      "method": "occlusion_sensitivity",
+      "isModelBased": true,
+      "isGradCAM": false,
+      "disclaimer": "This overlay highlights image regions that most influenced the model prediction. It is not a clinically validated saliency map."
     }
   }'::jsonb
 FROM models WHERE slug = 'densenet121-chest'
@@ -253,6 +260,13 @@ SELECT
     "source_model": {
       "family": "DenseNet121",
       "source": "TorchXRayVision densenet121-res224-all"
+    },
+    "explainability": {
+      "enabled": true,
+      "method": "occlusion_sensitivity",
+      "isModelBased": true,
+      "isGradCAM": false,
+      "disclaimer": "This overlay highlights image regions that most influenced the model prediction. It is not a clinically validated saliency map."
     }
   }'::jsonb
 FROM models WHERE slug = 'densenet121-cxr-suspicious'
@@ -302,6 +316,13 @@ SELECT
       "family": "DenseNet121",
       "source": "TorchXRayVision densenet121-res224-all (binary derived view)",
       "selected_findings": ["Mass", "Nodule", "Lung Opacity", "Lung Lesion"]
+    },
+    "explainability": {
+      "enabled": true,
+      "method": "occlusion_sensitivity",
+      "isModelBased": true,
+      "isGradCAM": false,
+      "disclaimer": "This overlay highlights image regions that most influenced the model prediction. It is not a clinically validated saliency map."
     }
   }'::jsonb
 FROM models WHERE slug = 'densenet121-cxr-suspicious-binary'
@@ -369,6 +390,13 @@ SELECT
       "possible_finding": 0.5,
       "low_confidence": 0.25,
       "validation_status": "unvalidated"
+    },
+    "explainability": {
+      "enabled": true,
+      "method": "occlusion_sensitivity",
+      "isModelBased": true,
+      "isGradCAM": false,
+      "disclaimer": "This overlay highlights image regions that most influenced the model prediction. It is not a clinically validated saliency map."
     }
   }'::jsonb
 FROM models WHERE slug = 'densenet121-nih'
@@ -422,6 +450,13 @@ SELECT
       "possible_finding": 0.5,
       "low_confidence": 0.25,
       "validation_status": "unvalidated"
+    },
+    "explainability": {
+      "enabled": true,
+      "method": "occlusion_sensitivity",
+      "isModelBased": true,
+      "isGradCAM": false,
+      "disclaimer": "This overlay highlights image regions that most influenced the model prediction. It is not a clinically validated saliency map."
     }
   }'::jsonb
 FROM models WHERE slug = 'brain-ctscan-cancer'
@@ -493,6 +528,13 @@ SELECT
     "source_model": {
       "family": "ResNet50",
       "source": "TorchXRayVision resnet50-res512-all"
+    },
+    "explainability": {
+      "enabled": true,
+      "method": "occlusion_sensitivity",
+      "isModelBased": true,
+      "isGradCAM": false,
+      "disclaimer": "This overlay highlights image regions that most influenced the model prediction. It is not a clinically validated saliency map."
     }
   }'::jsonb
 FROM models WHERE slug = 'resnet50-cxr-suspicious'
@@ -562,6 +604,13 @@ SELECT
       "family": "EfficientNet",
       "source": "HuggingFace: Anwarkh1/Skin_Cancer-Image_Classification — HAM10000 ISIC 2018 Task 3",
       "selected_findings": ["Actinic keratosis", "Basal cell carcinoma", "Melanoma"]
+    },
+    "explainability": {
+      "enabled": true,
+      "method": "occlusion_sensitivity",
+      "isModelBased": true,
+      "isGradCAM": false,
+      "disclaimer": "This overlay highlights image regions that most influenced the model prediction. It is not a clinically validated saliency map."
     }
   }'::jsonb
 FROM models WHERE slug = 'efficientnetb4-skin-ham10000'
