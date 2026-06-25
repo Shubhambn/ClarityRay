@@ -601,13 +601,13 @@ export default function SystemPanel(props: SystemPanelProps) {
           const modelId = modelInfo?.id ?? 'unknown model';
           const bodypart = modelInfo?.bodypart ?? 'region';
           const modality = modelInfo?.modality ?? 'scan';
-          const probsText = result.classProbabilities
-            ? Object.entries(result.classProbabilities)
-                .map(([k, v]) => `  ${k}: ${(v * 100).toFixed(1)}%`)
+          const probsText = result.classProbabilities?.length
+            ? result.classProbabilities
+                .map(({ label, probability }) => `  ${label}: ${(probability * 100).toFixed(1)}%`)
                 .join('\n')
             : null;
           const findingsText = result.findings?.length
-            ? result.findings.map(f => `  - ${f.label} (${(f.confidence * 100).toFixed(0)}%)`).join('\n')
+            ? result.findings.map(f => `  - ${f.label} (${(f.probability * 100).toFixed(0)}%)`).join('\n')
             : null;
 
           if (persona === 'researcher') {
