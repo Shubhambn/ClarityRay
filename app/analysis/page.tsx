@@ -757,6 +757,8 @@ export default function AnalysisPage() {
             explanationActive={hook.explanationActive}
             explanationProgress={hook.explanationProgress}
             heatmapMode={heatmapMode}
+            imageUrl={imageURL}
+            activeHeatmap={activeHeatmap}
           />
         </section>
 

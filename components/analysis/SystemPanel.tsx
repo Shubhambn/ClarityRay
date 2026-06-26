@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import type { SafeResult } from '@/lib/clarity/postprocess';
+import type { SafeResult, HeatmapData } from '@/lib/clarity/postprocess';
 import type { ClarityRayStatus, ModelInfo } from '@/hooks/useClarityRay';
 import { usePersona, type Persona } from '@/lib/persona/context';
+import { ExportButton } from '@/components/ExportButton';
 
 interface SystemPanelProps {
   status: ClarityRayStatus;
@@ -17,6 +18,8 @@ interface SystemPanelProps {
   explanationActive?: boolean;
   explanationProgress?: number | null;
   heatmapMode?: 'model' | 'contrast' | 'none';
+  imageUrl?: string | null;
+  activeHeatmap?: HeatmapData | null;
 }
 
 function ExplainabilityCard({
@@ -445,6 +448,8 @@ export default function SystemPanel(props: SystemPanelProps) {
     explanationActive = false,
     explanationProgress = null,
     heatmapMode = 'model',
+    imageUrl = null,
+    activeHeatmap = null,
   } = props;
   const { persona } = usePersona();
   const [patientQuestion, setPatientQuestion] = useState('');
@@ -1148,6 +1153,17 @@ export default function SystemPanel(props: SystemPanelProps) {
                 </div>
               </>
             )}
+
+            {/* ── EXPORT ──────────────────────────────────────────────────── */}
+            <div style={{ marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-default)' }}>
+              <ExportButton
+                result={result}
+                persona={persona}
+                modelInfo={modelInfo}
+                imageUrl={imageUrl}
+                activeHeatmap={activeHeatmap}
+              />
+            </div>
           </div>
         );
       })()}
