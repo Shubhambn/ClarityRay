@@ -1,0 +1,46 @@
+{
+  "current_model": "densenet121-nih14",
+  "version": "2.0.0",
+  "models": {
+    "densenet121-nih": {
+      "version": "1.0.0",
+      "url": "/models/densenet121-nih/model.onnx",
+      "spec_url": "/models/densenet121-nih/clarity.json"
+    },
+    "densenet121-nih14": {
+      "version": "1.0.0",
+      "url": "/models/densenet121-nih14/model.onnx",
+      "spec_url": "/models/densenet121-nih14/clarity.json"
+    },
+    "densenet121-chest": {
+      "version": "1.0.0",
+      "url": "/models/densenet121-chest/model.onnx",
+      "spec_url": "/models/densenet121-chest/clarity.json"
+    },
+    "densenet121-cxr-suspicious": {
+      "version": "1.0.0",
+      "url": "/models/densenet121-cxr-suspicious/model.onnx",
+      "spec_url": "/models/densenet121-cxr-suspicious/clarity.json"
+    },
+    "densenet121-cxr-suspicious-binary": {
+      "version": "1.0.0",
+      "url": "/models/densenet121-cxr-suspicious-binary/model.onnx",
+      "spec_url": "/models/densenet121-cxr-suspicious-binary/clarity.json"
+    },
+    "resnet50-cxr-suspicious": {
+      "version": "1.0.0",
+      "url": "/models/resnet50-cxr-suspicious/model.onnx",
+      "spec_url": "/models/resnet50-cxr-suspicious/clarity.json"
+    },
+    "brain-ctscan-cancer": {
+      "version": "1.0.0",
+      "url": "/models/brain-ctscan-cancer/model.onnx",
+      "spec_url": "/models/brain-ctscan-cancer/clarity.json"
+    },
+    "densenet121-lung-cancer-nih14": {
+      "version": "1.0.0",
+      "url": "https://huggingface.co/Shub-19/densenet121-lung-cancer-nih14/resolve/main/densenet121-lung-cancer-nih14/model.onnx",
+      "spec_url": "/models/densenet121-lung-cancer-nih14/clarity.json"
+    }
+  }
+}

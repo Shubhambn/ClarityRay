@@ -147,6 +147,8 @@ def _seed_one(base_url: str, key: str, slug: str, entry: dict) -> bool:
     print(f"  - model row upserted (id {model_id}, status published)")
 
     # 2) upsert version row (unique on model_id, version)
+    # Include spec_json so /api/models/[slug]/spec can serve it without
+    # a local file on the deployed platform.
     _supabase_request(
         base_url,
         key,
@@ -159,6 +161,7 @@ def _seed_one(base_url: str, key: str, slug: str, entry: dict) -> bool:
                 "version": version,
                 "clarity_url": clarity_url,
                 "model_url": model_url,
+                "spec_json": spec,
             }
         ],
         prefer="resolution=merge-duplicates,return=minimal",
@@ -175,9 +178,11 @@ def main(argv: list[str] | None = None) -> int:
 
     env = _load_env(API_ENV_PATH)
     base_url = env.get("SUPABASE_URL")
-    key = env.get("SUPABASE_KEY")
+    # Service role key bypasses RLS (required for inserts). Fall back to anon key
+    # only for read-only operations like --list.
+    key = env.get("SUPABASE_SERVICE_KEY") or env.get("SUPABASE_KEY")
     if not base_url or not key:
-        print("ERROR: set SUPABASE_URL and SUPABASE_KEY in api/.env", file=sys.stderr)
+        print("ERROR: set SUPABASE_URL and SUPABASE_SERVICE_KEY in api/.env", file=sys.stderr)
         return 2
 
     targets = _discover_models(args.slug)

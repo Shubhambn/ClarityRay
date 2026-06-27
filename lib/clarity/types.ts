@@ -137,6 +137,8 @@ export interface ClarityExplainabilitySpec {
   isModelBased: boolean;
   isGradCAM: boolean;
   disclaimer: string;
+  /** Grid cells per axis for occlusion sensitivity (default 12; higher = finer heatmap, slower). */
+  grid_size?: number;
 }
 
 export interface ClaritySpec {
@@ -759,7 +761,7 @@ function parseExplainabilitySpec(value: unknown, path: string): ClarityExplainab
     invalid(path, typeof value, "object");
   }
 
-  checkNoExtraKeys(value, ["enabled", "method", "isModelBased", "isGradCAM", "disclaimer"], path);
+  checkNoExtraKeys(value, ["enabled", "method", "isModelBased", "isGradCAM", "disclaimer", "grid_size"], path);
 
   const enabled = parseBoolean(requireField(value, "enabled", `${path}.enabled`), `${path}.enabled`);
   
@@ -772,12 +774,17 @@ function parseExplainabilitySpec(value: unknown, path: string): ClarityExplainab
   const isGradCAM = parseBoolean(requireField(value, "isGradCAM", `${path}.isGradCAM`), `${path}.isGradCAM`);
   const disclaimer = parseNonEmptyString(requireField(value, "disclaimer", `${path}.disclaimer`), `${path}.disclaimer`);
 
+  const grid_size = hasOwn(value, "grid_size")
+    ? parsePositiveInteger(value["grid_size"], `${path}.grid_size`)
+    : undefined;
+
   return {
     enabled,
     method: "occlusion_sensitivity",
     isModelBased,
     isGradCAM,
     disclaimer,
+    ...(grid_size !== undefined ? { grid_size } : {}),
   };
 }
 

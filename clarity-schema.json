@@ -278,6 +278,19 @@
           }
         }
       }
+    },
+    "explainability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "method", "isModelBased", "isGradCAM", "disclaimer"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "method": { "type": "string", "enum": ["occlusion_sensitivity"] },
+        "isModelBased": { "type": "boolean" },
+        "isGradCAM": { "type": "boolean" },
+        "disclaimer": { "type": "string", "minLength": 1 },
+        "grid_size": { "type": "integer", "minimum": 1 }
+      }
     }
   }
 }

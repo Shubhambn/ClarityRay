@@ -21,6 +21,8 @@ const STATIC_SLUGS = new Set([
   'densenet121-cxr-suspicious',
   'densenet121-cxr-suspicious-binary',
   'densenet121-nih',
+  'densenet121-nih14',
+  'densenet121-lung-cancer-nih14',
   'brain-ctscan-cancer',
   'resnet50-cxr-suspicious',
 ]);
@@ -270,9 +272,20 @@ export default function ModelsPage() {
         <section className="models-shell">
           {/* ── Header ───────────────────────────────────────────────────────── */}
           <header className="models-header">
-            <div>
-              <p className="mono label">MODEL LIBRARY</p>
-              <h1 className="models-title">Published models</h1>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span className="section-eyebrow" style={{ alignSelf: 'flex-start' }}>Model Library</span>
+              <h1 className="models-title" style={{ letterSpacing: '-0.02em', marginTop: 4 }}>Published models</h1>
+              <p style={{ fontFamily: 'var(--font-ui)', fontSize: '0.9375rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                Browse bundled and community-contributed medical AI models.
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div className="stat-card" style={{ minWidth: 80, padding: '10px 16px' }}>
+                  <span className="stat-num" style={{ fontSize: '1.25rem' }}>{staticLoading ? '…' : filteredStatic.length || STATIC_SLUGS.size}</span>
+                  <span className="stat-label">Bundled</span>
+                </div>
+              </div>
             </div>
           </header>
 
@@ -455,7 +468,7 @@ export default function ModelsPage() {
         .models-page {
           min-height: 100vh;
           background: var(--bg-base);
-          padding: calc(var(--space-16) + var(--space-4)) var(--space-4) var(--space-8);
+          padding: calc(var(--space-16) + var(--space-4)) var(--space-6) var(--space-8);
         }
 
         .models-shell {
@@ -463,21 +476,22 @@ export default function ModelsPage() {
           margin: 0 auto;
           display: flex;
           flex-direction: column;
-          gap: var(--space-6);
+          gap: var(--space-8);
         }
 
         .models-header {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: space-between;
+          gap: var(--space-4);
+          padding-bottom: var(--space-6);
           border-bottom: 1px solid var(--border-subtle);
-          padding-bottom: var(--space-2);
         }
 
         .models-title {
-          font-size: 1.5rem;
-          line-height: 1.2;
-          font-weight: 600;
+          font-size: clamp(1.5rem, 3vw, 2rem);
+          line-height: 1.1;
+          font-weight: 700;
           color: var(--text-primary);
         }
 
@@ -522,40 +536,62 @@ export default function ModelsPage() {
           flex-wrap: wrap;
           align-items: center;
           gap: var(--space-2);
+          padding: var(--space-3) var(--space-4);
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-lg);
         }
 
         .select {
-          min-width: 160px;
+          min-width: 148px;
           border: 1px solid var(--border-subtle);
           background: var(--bg-elevated);
           color: var(--text-primary);
           border-radius: var(--radius-md);
-          padding: var(--space-2) var(--space-3);
+          padding: 6px 12px;
           font-family: var(--font-ui);
-          font-size: 0.875rem;
+          font-size: 0.8125rem;
+          cursor: pointer;
+          transition: border-color 0.15s;
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 10px center;
+          padding-right: 30px;
+        }
+
+        .select:hover {
+          border-color: var(--border-default);
         }
 
         .select:focus {
-          outline: 1px solid var(--accent-primary);
-          outline-offset: 2px;
+          outline: none;
+          border-color: var(--accent-primary);
+          box-shadow: 0 0 0 3px rgba(34,197,94,0.1);
         }
 
         .clear-filters-link {
-          border: none;
+          border: 1px solid var(--border-subtle);
           background: transparent;
-          color: var(--accent-primary);
+          color: var(--text-secondary);
           font-family: var(--font-mono);
           font-size: 0.75rem;
           cursor: pointer;
-          text-decoration: underline;
-          text-underline-offset: 3px;
-          padding: 0;
+          padding: 5px 10px;
+          border-radius: var(--radius-md);
+          transition: border-color 0.15s, color 0.15s;
+          white-space: nowrap;
+        }
+
+        .clear-filters-link:hover {
+          border-color: var(--border-accent);
+          color: var(--accent-primary);
         }
 
         /* ── Grid ── */
         .models-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
           gap: var(--space-4);
         }
 

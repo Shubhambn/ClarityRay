@@ -54,7 +54,7 @@ export interface SystemLog {
 }
 
 const LOCAL_STORAGE_MODEL_KEY = 'clarityray_selected_model'
-const DEFAULT_MODEL_SLUG = 'densenet121-chest'
+const DEFAULT_MODEL_SLUG = 'densenet121-nih14'
 
 function toModelInfo(spec: ClaritySpec): ModelInfo {
   return {
@@ -147,10 +147,16 @@ export function useClarityRay() {
         addLog('info', 'Fetching model manifest...')
         await _tick()
         const manifest = await fetchManifest()
-        const manifestModel = manifest.models[preferredModel]
-          ? manifest.models[preferredModel]
-          : getCurrentModel(manifest)
-        const selectedModelId = manifest.models[preferredModel] ? preferredModel : manifest.current_model
+        // Honor the user's explicit selection even if the model is not yet in
+        // the manifest (e.g. local-only model not yet seeded to Supabase).
+        // Synthesise a static entry from the predictable public path rather than
+        // silently falling back to whatever getCurrentModel returns.
+        const manifestModel = manifest.models[preferredModel] ?? {
+          version: '1.0.0',
+          url: `/models/${preferredModel}/model.onnx`,
+          spec_url: `/models/${preferredModel}/clarity.json`,
+        }
+        const selectedModelId = preferredModel
         addLog('info', `Manifest loaded — model: ${selectedModelId}`)
 
         if (cancelled) return
@@ -312,7 +318,7 @@ export function useClarityRay() {
               }
 
               const heatmap = await generateOcclusionHeatmap(tensor, spec, targetClassIndex, {
-                gridSize: 12,
+                gridSize: spec.explainability?.grid_size ?? 12,
                 abortSignal: controller.signal,
                 onProgress: (p) => {
                   setExplanationProgress(p)

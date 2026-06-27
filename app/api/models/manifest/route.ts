@@ -11,8 +11,10 @@ const API_URL = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? ''
 const DEFAULT_MODEL_SLUG = 'densenet121-chest'
 
 /**
- * Build a ManifestSpec from Supabase model records.
- * Returns null when no published models are available.
+ * Build a ManifestSpec from Supabase model records merged with the local
+ * static manifest. Supabase entries take precedence when the same slug exists
+ * in both, but local-only models (not yet seeded to Supabase) are always
+ * included so they remain selectable from the model library.
  */
 async function buildManifestFromSupabase(): Promise<ManifestSpec | null> {
   const data = await fetchModelsFromSupabase()
@@ -32,6 +34,20 @@ async function buildManifestFromSupabase(): Promise<ManifestSpec | null> {
   }
 
   if (Object.keys(models).length === 0) return null
+
+  // Merge local manifest entries so models that exist on disk but have not
+  // yet been seeded to Supabase are still reachable. Supabase wins on conflict.
+  try {
+    const staticPath = join(process.cwd(), 'public', 'models', 'manifest.json')
+    const localManifest = JSON.parse(readFileSync(staticPath, 'utf-8')) as ManifestSpec
+    for (const [slug, entry] of Object.entries(localManifest.models)) {
+      if (!models[slug]) {
+        models[slug] = entry
+      }
+    }
+  } catch {
+    // Local manifest unavailable — Supabase-only models remain usable.
+  }
 
   // Pick current_model: prefer the default slug, fall back to the first model.
   const current_model = models[DEFAULT_MODEL_SLUG]

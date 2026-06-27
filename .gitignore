@@ -48,8 +48,8 @@ dev-server*.log
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-Add-Content .gitignore "*.onnx"
-Add-Content .gitignore "*.onnx.data"
-Add-Content .gitignore "*.pth"
-Add-Content .gitignore "*.pt"
-Add-Content .gitignore "downloads/"
+*.onnx
+*.onnx.data
+*.pth
+*.pt
+downloads/
